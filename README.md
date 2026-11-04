@@ -53,6 +53,13 @@ curl -s -b jar $API/me
 
 Delete `jar` when done: it holds a live session token.
 
+To log in through the web app instead, run the API as below, then follow the "Run it against the API" section of
+the `wallet-track-app` README. The first sign-in asks for the enrollment secret.
+
+```sh
+make dev INSECURE_DEV_COOKIES=true TRUSTED_PROXIES=127.0.0.1/32,::1/128 ALLOWED_ORIGINS=http://localhost:3000
+```
+
 Other operator commands:
 
 | Command | What it does |
@@ -69,7 +76,7 @@ Other operator commands:
 | Second-factor lockout | 5 consecutive failures of TOTP, a recovery code or enrollment, all behind the password, lock the account from any IP for 1 minute, doubling up to 1 hour. The count persists in the database and clears only when a second factor succeeds |
 | Rate limits (in memory) | Per client IP: burst of 20, one more every 6 s, on routes that check a credential. `GET /auth/csrf` has its own bucket: burst of 60, one more per second. Per account, only on steps behind the password: burst of 10, one more every 30 s |
 | Unknown emails | Same code path as a real account: same dummy-hash cost, same 401, same lockout, same 429 |
-| Client IP | The TCP peer by default, ignoring `X-Forwarded-For`. Behind the BFF that makes the per-IP limit one shared bucket, so set `TRUSTED_PROXIES` to the BFF's address in production. A listed peer's header is read from the right, and the first untrusted address is the client. Limits and password lockout key an IPv6 client by its /64 and an IPv4-mapped address as IPv4 |
+| Client IP | The TCP peer by default, ignoring `X-Forwarded-For`. Behind the BFF that makes the per-IP limit one shared bucket, so set `TRUSTED_PROXIES` to the BFF's address, locally too. A listed peer's header is read from the right, and the first untrusted address is the client. Limits and password lockout key an IPv6 client by its /64 and an IPv4-mapped address as IPv4 |
 | `Origin` | A mutating request carrying an `Origin` not in `ALLOWED_ORIGINS` gets a 403, so an empty list rejects them all. No `Origin` leaves the decision to the CSRF token |
 
 ## Commands
