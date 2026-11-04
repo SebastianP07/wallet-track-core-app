@@ -1,0 +1,11 @@
+version: "2"
+# One entry per module: add queries/<module>/ and a block like this when the module needs SQL.
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: queries/accounts
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/accounts/adapters/postgres/sqlcgen
+        sql_package: pgx/v5

@@ -1,0 +1,2783 @@
+openapi: 3.1.1
+info:
+  title: Wallet Track API
+  version: 1.0.0
+  description: |
+    HTTP contract of Wallet Track, a private single-user personal finance app. Decision numbers (D1-D11, T1-T7) refer to PLAN.md.
+
+    Conventions:
+
+    - Money is always an integer of whole COP, never a decimal.
+    - The backend computes every total, KPI and urgency level (D1), so they appear only in responses.
+    - Errors are `application/problem+json`.
+    - Requests are authenticated by the `__Host-session` cookie. Every mutating request also sends `X-CSRF-Token`.
+    - There is no public sign-up.
+  license:
+    name: Proprietary
+    url: https://github.com/SebastianP07/wallet-track-core-app
+servers:
+- url: /api/v1
+  description: Same origin. The browser calls the Next.js BFF, which forwards to the Go API.
+security:
+- sessionCookie: []
+tags:
+- name: Auth
+  description: Password, TOTP, MFA enrollment, recovery codes and sessions.
+- name: Accounts
+  description: Where money sits, including savings (D6, D9).
+- name: Periods
+  description: 'Monthly periods: open, close, list (D7).'
+- name: Period items
+  description: Fixed, occasional, income and card-charge items of a month.
+- name: Recurring templates
+  description: What opening a month clones into items.
+- name: Tags
+  description: Free-form colored labels that never affect totals (D5).
+- name: Credit cards
+  description: Cards that card charges are tracked against (D3).
+- name: People
+  description: Platform members and their payments (D4, D8).
+- name: Platforms
+  description: Shared subscriptions split across members (D10).
+- name: Dashboard
+  description: The aggregated view of a month (D2, D3, D11).
+paths:
+  /auth/csrf:
+    get:
+      operationId: getCsrfToken
+      summary: Issue a CSRF token
+      tags:
+      - Auth
+      description: 'Double-submit source: call before the first mutating request. Send the token back
+        in `X-CSRF-Token`.'
+      security: []
+      responses:
+        '200':
+          description: Token issued; the same value is set in the `__Host-csrf` cookie.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetCsrfCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CsrfToken'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/login/password:
+    post:
+      operationId: loginWithPassword
+      summary: 'Login step 1: password'
+      tags:
+      - Auth
+      description: 'Failures return the same generic 401 whether or not the account exists. There is no
+        sign-up endpoint: the owner is created with `cmd/admin create-owner`.'
+      security: []
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordLoginRequest'
+      responses:
+        '200':
+          description: Password accepted. A short-lived session limited to the second factor is set.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginStep'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/login/totp:
+    post:
+      operationId: loginWithTotp
+      summary: 'Login step 2: TOTP code'
+      tags:
+      - Auth
+      description: Requires the session from step 1.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCodeRequest'
+      responses:
+        '200':
+          description: Second factor accepted. The session is rotated and fully authenticated.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/login/recovery-code:
+    post:
+      operationId: loginWithRecoveryCode
+      summary: 'Login step 2: recovery code'
+      tags:
+      - Auth
+      description: Requires the session from step 1. Each code works once.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCodeRequest'
+      responses:
+        '200':
+          description: Code accepted and consumed. The session is rotated and fully authenticated.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/mfa/enrollment:
+    post:
+      operationId: startMfaEnrollment
+      summary: Start MFA enrollment
+      tags:
+      - Auth
+      description: Requires the session from step 1, when `nextStep` is `enroll_mfa`, and the one-time
+        enrollment secret that `cmd/admin create-owner` prints once. A wrong, expired or missing secret
+        returns the same generic 401, never a 400. 409 if MFA is already enabled. The enrollment secret
+        stays valid until it expires or enrollment is confirmed, so calling again replaces an unconfirmed
+        TOTP secret.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaEnrollmentStartRequest'
+      responses:
+        '200':
+          description: New TOTP secret to show as a QR code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaEnrollment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /auth/mfa/enrollment/confirm:
+    post:
+      operationId: confirmMfaEnrollment
+      summary: Confirm MFA enrollment
+      tags:
+      - Auth
+      description: Consumes the enrollment secret, so it cannot be used again. Returns the generic 401
+        if it expired after enrollment started.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCodeRequest'
+      responses:
+        '200':
+          description: MFA enabled. The session is rotated and fully authenticated. The recovery codes
+            are shown only here.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaEnrollmentResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/recovery-codes:
+    get:
+      operationId: getRecoveryCodeStatus
+      summary: Count unused recovery codes
+      tags:
+      - Auth
+      responses:
+        '200':
+          description: Number of unused codes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodeStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/recovery-codes/regenerate:
+    post:
+      operationId: regenerateRecoveryCodes
+      summary: Replace all recovery codes
+      tags:
+      - Auth
+      description: Requires a current TOTP code.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpCodeRequest'
+      responses:
+        '200':
+          description: New codes, shown only here. All earlier codes stop working.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodeList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Log out this session
+      tags:
+      - Auth
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Session revoked and cookie cleared.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /auth/logout-all:
+    post:
+      operationId: logoutAll
+      summary: Log out every session
+      tags:
+      - Auth
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: All sessions revoked and cookie cleared.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /me:
+    get:
+      operationId: getMe
+      summary: Get the authenticated user
+      tags:
+      - Auth
+      responses:
+        '200':
+          description: The authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /accounts:
+    get:
+      operationId: listAccounts
+      summary: List accounts with totals
+      tags:
+      - Accounts
+      responses:
+        '200':
+          description: All accounts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createAccount
+      summary: Create an account
+      tags:
+      - Accounts
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountCreate'
+      responses:
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /accounts/{id}:
+    get:
+      operationId: getAccount
+      summary: Get an account
+      tags:
+      - Accounts
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateAccount
+      summary: Rename an account or set its balance
+      tags:
+      - Accounts
+      description: The balance is only ever typed by the user (D6).
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountUpdate'
+      responses:
+        '200':
+          description: Account updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAccount
+      summary: Delete an account
+      tags:
+      - Accounts
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Account deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /periods:
+    get:
+      operationId: listPeriods
+      summary: List periods, newest first
+      tags:
+      - Periods
+      responses:
+        '200':
+          description: All periods.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: openPeriod
+      summary: Open a month
+      tags:
+      - Periods
+      description: 'Idempotent on retry: templates are cloned once per month.'
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeriodOpenRequest'
+      responses:
+        '201':
+          description: Month opened; active templates were cloned into items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '200':
+          description: Month was already open or closed; nothing changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /periods/{period}:
+    get:
+      operationId: getPeriod
+      summary: Get a period
+      tags:
+      - Periods
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      responses:
+        '200':
+          description: The period.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /periods/{period}/close:
+    post:
+      operationId: closePeriod
+      summary: Close a month
+      tags:
+      - Periods
+      description: Every pending expense and income item becomes `overdue` (D7). Card charges are informational
+        (D3) and stay as they are. Idempotent.
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Month closed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /periods/{period}/card-totals:
+    get:
+      operationId: getCardChargeTotals
+      summary: Sum card charges per card
+      tags:
+      - Periods
+      description: Informational; never part of To pay, Outgoing or Balance (D3).
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      responses:
+        '200':
+          description: Per-card charges of the month.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardChargeTotals'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /periods/{period}/items:
+    get:
+      operationId: listPeriodItems
+      summary: List a month's items
+      tags:
+      - Period items
+      description: Filters narrow `items` only. `totals` always covers the whole month, because tags never
+        affect totals (D5).
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      - $ref: '#/components/parameters/ItemKindFilter'
+      - $ref: '#/components/parameters/ItemStatusFilter'
+      - $ref: '#/components/parameters/TagFilter'
+      responses:
+        '200':
+          description: Matching items, with totals for the whole month.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItemList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createPeriodItem
+      summary: Add an item to a month
+      tags:
+      - Period items
+      description: 409 if the month is closed.
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeriodItemCreate'
+      responses:
+        '201':
+          description: Item created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /period-items/{id}:
+    get:
+      operationId: getPeriodItem
+      summary: Get an item
+      tags:
+      - Period items
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The item.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePeriodItem
+      summary: Edit an item
+      tags:
+      - Period items
+      description: Affects this month only, never its template.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeriodItemUpdate'
+      responses:
+        '200':
+          description: Item updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deletePeriodItem
+      summary: Delete an item
+      tags:
+      - Period items
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Item deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /period-items/{id}/done:
+    put:
+      operationId: markPeriodItemDone
+      summary: Mark an item paid or received
+      tags:
+      - Period items
+      description: Idempotent. Never changes an account balance (D6). An overdue item stays in its original
+        month (D7).
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Item is done.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: unmarkPeriodItemDone
+      summary: Undo paid or received
+      tags:
+      - Period items
+      description: Idempotent.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Item is pending again, or overdue if it is an expense or income item of a closed
+            month. A card charge is always pending again (D3).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PeriodItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /overdue-items:
+    get:
+      operationId: listOverdueItems
+      summary: List overdue items
+      tags:
+      - Period items
+      description: These never count toward any open month's totals (D7).
+      responses:
+        '200':
+          description: Unsettled expense and income items from closed months, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverdueItemList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /recurring-templates:
+    get:
+      operationId: listRecurringTemplates
+      summary: List templates
+      tags:
+      - Recurring templates
+      parameters:
+      - $ref: '#/components/parameters/TemplateActiveFilter'
+      responses:
+        '200':
+          description: All templates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringTemplateList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createRecurringTemplate
+      summary: Create a template
+      tags:
+      - Recurring templates
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringTemplateCreate'
+      responses:
+        '201':
+          description: Template created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /recurring-templates/{id}:
+    get:
+      operationId: getRecurringTemplate
+      summary: Get a template
+      tags:
+      - Recurring templates
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The template.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateRecurringTemplate
+      summary: Edit a template
+      tags:
+      - Recurring templates
+      description: Affects future months only. An active `card_charge` template must have a card, so
+        removing its card or reactivating one without a card returns 400.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringTemplateUpdate'
+      responses:
+        '200':
+          description: Template updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteRecurringTemplate
+      summary: Delete a template
+      tags:
+      - Recurring templates
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Template deleted; items it created stay, without the link.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tags:
+    get:
+      operationId: listTags
+      summary: List tags
+      tags:
+      - Tags
+      responses:
+        '200':
+          description: All tags.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createTag
+      summary: Create a tag
+      tags:
+      - Tags
+      description: 409 if the name is taken.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreate'
+      responses:
+        '201':
+          description: Tag created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /tags/{id}:
+    patch:
+      operationId: updateTag
+      summary: Edit a tag
+      tags:
+      - Tags
+      description: 409 if the name is taken.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagUpdate'
+      responses:
+        '200':
+          description: Tag updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteTag
+      summary: Delete a tag
+      tags:
+      - Tags
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Tag deleted; items and templates keep existing, untagged.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /credit-cards:
+    get:
+      operationId: listCreditCards
+      summary: List credit cards
+      tags:
+      - Credit cards
+      responses:
+        '200':
+          description: All cards.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCardList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createCreditCard
+      summary: Create a credit card
+      tags:
+      - Credit cards
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditCardCreate'
+      responses:
+        '201':
+          description: Card created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCard'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /credit-cards/{id}:
+    get:
+      operationId: getCreditCard
+      summary: Get a credit card
+      tags:
+      - Credit cards
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The card.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCard'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateCreditCard
+      summary: Edit a credit card
+      tags:
+      - Credit cards
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditCardUpdate'
+      responses:
+        '200':
+          description: Card updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCard'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteCreditCard
+      summary: Delete a credit card
+      tags:
+      - Credit cards
+      description: Deactivates the card's `card_charge` templates in the same delete, so they stop generating
+        items. Past items keep their rows with no card.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Card deleted; items, templates and platforms keep existing, without the card.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /people:
+    get:
+      operationId: listPeople
+      summary: List people
+      tags:
+      - People
+      responses:
+        '200':
+          description: All people.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createPerson
+      summary: Create a person
+      tags:
+      - People
+      description: 409 if `isOwner` is true and an owner already exists.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonCreate'
+      responses:
+        '201':
+          description: Person created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /people/{id}:
+    get:
+      operationId: getPerson
+      summary: Get a person
+      tags:
+      - People
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The person.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePerson
+      summary: Edit a person
+      tags:
+      - People
+      description: 409 if `isOwner` is true and another owner already exists.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PersonUpdate'
+      responses:
+        '200':
+          description: Person updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Person'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deletePerson
+      summary: Delete a person
+      tags:
+      - People
+      description: 409 if the person has payments, which are kept as history.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Person deleted; past income items stay, without the link.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /people/{id}/payments:
+    get:
+      operationId: listPlatformPayments
+      summary: List a person's payments
+      tags:
+      - People
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Payments, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformPaymentList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: recordPlatformPayment
+      summary: Record a payment
+      tags:
+      - People
+      description: The backend computes `amount` and `coveredUntil` (D1, D8), and marks the person's income
+        item of that month received (D4).
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformPaymentCreate'
+      responses:
+        '201':
+          description: Payment recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformPayment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /platform-payments/{id}:
+    delete:
+      operationId: deletePlatformPayment
+      summary: Delete a mistaken payment
+      tags:
+      - People
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Payment deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /platforms:
+    get:
+      operationId: listPlatforms
+      summary: List platforms
+      tags:
+      - Platforms
+      responses:
+        '200':
+          description: All platforms.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createPlatform
+      summary: Create a platform
+      tags:
+      - Platforms
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformCreate'
+      responses:
+        '201':
+          description: Platform created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Platform'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /platforms/{id}:
+    get:
+      operationId: getPlatform
+      summary: Get a platform
+      tags:
+      - Platforms
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The platform.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Platform'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePlatform
+      summary: Edit a platform
+      tags:
+      - Platforms
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformUpdate'
+      responses:
+        '200':
+          description: Platform updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Platform'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deletePlatform
+      summary: Delete a platform
+      tags:
+      - Platforms
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Platform and its memberships deleted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /platforms/{id}/members/{personId}:
+    put:
+      operationId: addPlatformMember
+      summary: Add a member
+      tags:
+      - Platforms
+      description: Idempotent.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/PersonId'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: The platform with its members.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Platform'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: removePlatformMember
+      summary: Remove a member
+      tags:
+      - Platforms
+      description: Idempotent.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/PersonId'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: The platform with its members.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Platform'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /dashboard:
+    get:
+      operationId: getDashboard
+      summary: Get everything the Dashboard shows for a month
+      tags:
+      - Dashboard
+      description: 404 if the month has not been opened.
+      parameters:
+      - $ref: '#/components/parameters/PeriodQuery'
+      responses:
+        '200':
+          description: All sections and KPIs of the month.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+      description: 'Opaque session token: HttpOnly, Secure, SameSite=Lax, Path=/.'
+  headers:
+    SetSessionCookie:
+      description: Sets, rotates or clears `__Host-session`.
+      schema:
+        type: string
+    SetCsrfCookie:
+      description: Sets `__Host-csrf`, the double-submit counterpart of `X-CSRF-Token`.
+      schema:
+        type: string
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 0
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Must match the `__Host-csrf` cookie (double-submit). See `GET /auth/csrf`.
+      schema:
+        type: string
+        minLength: 1
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    PersonId:
+      name: personId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Id'
+    Period:
+      name: period
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/YearMonth'
+    PeriodQuery:
+      name: period
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/YearMonth'
+    ItemKindFilter:
+      name: kind
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/ItemKind'
+    ItemStatusFilter:
+      name: status
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/ItemStatus'
+    TagFilter:
+      name: tagId
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Id'
+    TemplateActiveFilter:
+      name: active
+      in: query
+      required: false
+      schema:
+        type: boolean
+  responses:
+    BadRequest:
+      description: The request is malformed or failed validation; `errors` lists the fields.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing, expired or revoked session, an incomplete login, or rejected credentials.
+        The message never says which.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Missing or mismatched CSRF token, or a rejected `Origin`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: No such resource.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Conflict:
+      description: The request conflicts with the current state; `detail` says how.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: Rate limit or lockout in effect.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details, the only error body of this API.
+      required:
+      - title
+      - status
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Identifier of the problem kind.
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+          description: Present on validation failures.
+    FieldError:
+      type: object
+      required:
+      - field
+      - message
+      properties:
+        field:
+          type: string
+          description: JSON path of the rejected value, or the parameter name.
+        message:
+          type: string
+      additionalProperties: false
+    Money:
+      type: integer
+      format: int64
+      minimum: -9007199254740991
+      maximum: 9007199254740991
+      description: Whole Colombian pesos. May be negative. Bounded to what a JSON number carries safely
+        in a browser.
+      examples:
+      - 5584474
+    NonNegativeMoney:
+      type: integer
+      format: int64
+      minimum: 0
+      maximum: 9007199254740991
+      description: Whole Colombian pesos, zero or more.
+      examples:
+      - 64700
+    YearMonth:
+      type: string
+      pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
+      description: A month, as YYYY-MM.
+      examples:
+      - 2026-11
+    Id:
+      type: string
+      format: uuid
+    Date:
+      type: string
+      format: date
+      description: Calendar date in `America/Bogota`.
+    Timestamp:
+      type: string
+      format: date-time
+    HexColor:
+      type: string
+      pattern: ^#[0-9a-fA-F]{6}$
+      examples:
+      - '#3b82f6'
+    Name:
+      type: string
+      minLength: 1
+      maxLength: 120
+    DayOfMonth:
+      type: integer
+      minimum: 1
+      maximum: 31
+      description: A day beyond the end of a month clamps to its last day (D11).
+    BillingMonths:
+      type: integer
+      minimum: 1
+      maximum: 120
+      description: 'Months per payment: 1 is monthly, 6 is semiannual (D8).'
+    CsrfToken:
+      type: object
+      required:
+      - csrfToken
+      properties:
+        csrfToken:
+          type: string
+      additionalProperties: false
+    PasswordLoginRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+      additionalProperties: false
+    LoginStep:
+      type: object
+      required:
+      - nextStep
+      properties:
+        nextStep:
+          type: string
+          enum:
+          - totp
+          - enroll_mfa
+          description: '`enroll_mfa` on first login, when MFA is not set up yet.'
+      additionalProperties: false
+    TotpCodeRequest:
+      type: object
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          pattern: ^[0-9]{6}$
+      additionalProperties: false
+    RecoveryCodeRequest:
+      type: object
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+      additionalProperties: false
+    User:
+      type: object
+      required:
+      - id
+      - email
+      - mfaEnabled
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        email:
+          type: string
+          format: email
+        mfaEnabled:
+          type: boolean
+      additionalProperties: false
+    MfaEnrollmentStartRequest:
+      type: object
+      required:
+      - enrollmentSecret
+      properties:
+        enrollmentSecret:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: One-time secret printed by `cmd/admin create-owner`.
+      additionalProperties: false
+    MfaEnrollment:
+      type: object
+      required:
+      - secret
+      - otpauthUri
+      properties:
+        secret:
+          type: string
+          description: Base32 secret, for manual entry.
+        otpauthUri:
+          type: string
+          format: uri
+          description: Content of the QR code.
+      additionalProperties: false
+    MfaEnrollmentResult:
+      type: object
+      required:
+      - user
+      - recoveryCodes
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        recoveryCodes:
+          $ref: '#/components/schemas/RecoveryCodes'
+      additionalProperties: false
+    RecoveryCodes:
+      type: array
+      items:
+        type: string
+      minItems: 10
+      maxItems: 10
+      description: Ten one-time codes. Only their hashes are stored.
+    RecoveryCodeList:
+      type: object
+      required:
+      - recoveryCodes
+      properties:
+        recoveryCodes:
+          $ref: '#/components/schemas/RecoveryCodes'
+      additionalProperties: false
+    RecoveryCodeStatus:
+      type: object
+      required:
+      - remaining
+      properties:
+        remaining:
+          type: integer
+          minimum: 0
+          maximum: 10
+      additionalProperties: false
+    AccountKind:
+      type: string
+      enum:
+      - bank
+      - wallet
+      - cash
+      - food_card
+      - savings
+      description: '`savings` accounts count toward Savings instead of Current total (D9).'
+    Account:
+      type: object
+      required:
+      - id
+      - name
+      - kind
+      - balance
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        balance:
+          $ref: '#/components/schemas/Money'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    AccountCreate:
+      type: object
+      required:
+      - name
+      - kind
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        balance:
+          $ref: '#/components/schemas/Money'
+      additionalProperties: false
+    AccountUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        kind:
+          $ref: '#/components/schemas/AccountKind'
+        balance:
+          $ref: '#/components/schemas/Money'
+      additionalProperties: false
+      minProperties: 1
+    AccountList:
+      type: object
+      required:
+      - items
+      - currentTotal
+      - savingsTotal
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Account'
+        currentTotal:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Total actual: sum of non-savings balances (D6, D9).'
+        savingsTotal:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Ahorro: sum of savings balances (D9).'
+      additionalProperties: false
+    PeriodStatus:
+      type: string
+      enum:
+      - open
+      - closed
+    Period:
+      type: object
+      required:
+      - id
+      - period
+      - status
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        period:
+          $ref: '#/components/schemas/YearMonth'
+        status:
+          $ref: '#/components/schemas/PeriodStatus'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    PeriodList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Period'
+      additionalProperties: false
+    PeriodOpenRequest:
+      type: object
+      required:
+      - period
+      properties:
+        period:
+          $ref: '#/components/schemas/YearMonth'
+      additionalProperties: false
+    ItemKind:
+      type: string
+      enum:
+      - fixed
+      - occasional
+      - income
+      - card_charge
+    ItemStatus:
+      type: string
+      enum:
+      - pending
+      - done
+      - overdue
+      description: '`overdue` means the month closed while an expense or income item was still pending
+        (D7). Card charges never become overdue (D3).'
+    Urgency:
+      type: string
+      enum:
+      - none
+      - yellow
+      - red
+      description: 'Computed by the backend from days left in `America/Bogota` (D11): `yellow` at 10 or
+        fewer, `red` at 3 or fewer including past due. Always `none` for done items and items without
+        a due date.'
+    PeriodItem:
+      type: object
+      required:
+      - id
+      - period
+      - kind
+      - name
+      - amount
+      - dueDate
+      - templateId
+      - personId
+      - cardId
+      - tagId
+      - status
+      - doneAt
+      - urgency
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        period:
+          $ref: '#/components/schemas/YearMonth'
+        kind:
+          $ref: '#/components/schemas/ItemKind'
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDate:
+          description: Set on fixed and occasional items.
+          oneOf:
+          - $ref: '#/components/schemas/Date'
+          - type: 'null'
+        templateId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        personId:
+          description: Platform member this income item is for (D4).
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        status:
+          $ref: '#/components/schemas/ItemStatus'
+        doneAt:
+          oneOf:
+          - $ref: '#/components/schemas/Timestamp'
+          - type: 'null'
+        urgency:
+          $ref: '#/components/schemas/Urgency'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    ExpenseItemCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      - dueDate
+      properties:
+        kind:
+          type: string
+          enum:
+          - fixed
+          - occasional
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDate:
+          $ref: '#/components/schemas/Date'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+    IncomeItemCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      properties:
+        kind:
+          type: string
+          const: income
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+    CardChargeItemCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      - cardId
+      properties:
+        kind:
+          type: string
+          const: card_charge
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        cardId:
+          $ref: '#/components/schemas/Id'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+    PeriodItemCreate:
+      oneOf:
+      - $ref: '#/components/schemas/ExpenseItemCreate'
+      - $ref: '#/components/schemas/IncomeItemCreate'
+      - $ref: '#/components/schemas/CardChargeItemCreate'
+      discriminator:
+        propertyName: kind
+        mapping:
+          fixed: '#/components/schemas/ExpenseItemCreate'
+          occasional: '#/components/schemas/ExpenseItemCreate'
+          income: '#/components/schemas/IncomeItemCreate'
+          card_charge: '#/components/schemas/CardChargeItemCreate'
+    PeriodItemUpdate:
+      type: object
+      description: '`kind` and `status` cannot be edited; the done endpoints change `status`.'
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDate:
+          $ref: '#/components/schemas/Date'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+      minProperties: 1
+    ItemKindTotal:
+      type: object
+      required:
+      - total
+      - pending
+      properties:
+        total:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Sum of every item of this kind in the month.
+        pending:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Sum of its pending items.
+      additionalProperties: false
+    PeriodItemTotals:
+      type: object
+      required:
+      - fixed
+      - occasional
+      - income
+      - cardCharge
+      properties:
+        fixed:
+          $ref: '#/components/schemas/ItemKindTotal'
+        occasional:
+          $ref: '#/components/schemas/ItemKindTotal'
+        income:
+          $ref: '#/components/schemas/ItemKindTotal'
+        cardCharge:
+          $ref: '#/components/schemas/ItemKindTotal'
+      additionalProperties: false
+    PeriodItemList:
+      type: object
+      required:
+      - items
+      - totals
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeriodItem'
+        totals:
+          $ref: '#/components/schemas/PeriodItemTotals'
+      additionalProperties: false
+    OverdueItemList:
+      type: object
+      required:
+      - items
+      - expenseTotal
+      - incomeTotal
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeriodItem'
+        expenseTotal:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Sum of overdue expenses.
+        incomeTotal:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Sum of overdue income.
+      additionalProperties: false
+    TemplateKind:
+      type: string
+      enum:
+      - fixed
+      - income
+      - card_charge
+    RecurringTemplate:
+      type: object
+      required:
+      - id
+      - kind
+      - name
+      - amount
+      - dueDay
+      - cardId
+      - tagId
+      - active
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        kind:
+          $ref: '#/components/schemas/TemplateKind'
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDay:
+          oneOf:
+          - $ref: '#/components/schemas/DayOfMonth'
+          - type: 'null'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active:
+          type: boolean
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    FixedTemplateCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      - dueDay
+      properties:
+        kind:
+          type: string
+          const: fixed
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active:
+          type: boolean
+          default: true
+      additionalProperties: false
+    IncomeTemplateCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      properties:
+        kind:
+          type: string
+          const: income
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active:
+          type: boolean
+          default: true
+      additionalProperties: false
+    CardChargeTemplateCreate:
+      type: object
+      required:
+      - kind
+      - name
+      - amount
+      - cardId
+      properties:
+        kind:
+          type: string
+          const: card_charge
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        cardId:
+          $ref: '#/components/schemas/Id'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active:
+          type: boolean
+          default: true
+      additionalProperties: false
+    RecurringTemplateCreate:
+      oneOf:
+      - $ref: '#/components/schemas/FixedTemplateCreate'
+      - $ref: '#/components/schemas/IncomeTemplateCreate'
+      - $ref: '#/components/schemas/CardChargeTemplateCreate'
+      discriminator:
+        propertyName: kind
+        mapping:
+          fixed: '#/components/schemas/FixedTemplateCreate'
+          income: '#/components/schemas/IncomeTemplateCreate'
+          card_charge: '#/components/schemas/CardChargeTemplateCreate'
+    RecurringTemplateUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        amount:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        dueDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        tagId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        active:
+          type: boolean
+      additionalProperties: false
+      minProperties: 1
+    RecurringTemplateList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecurringTemplate'
+      additionalProperties: false
+    Tag:
+      type: object
+      required:
+      - id
+      - name
+      - color
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        color:
+          $ref: '#/components/schemas/HexColor'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    TagCreate:
+      type: object
+      required:
+      - name
+      - color
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        color:
+          $ref: '#/components/schemas/HexColor'
+      additionalProperties: false
+    TagUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        color:
+          $ref: '#/components/schemas/HexColor'
+      additionalProperties: false
+      minProperties: 1
+    TagList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+      additionalProperties: false
+    CreditCard:
+      type: object
+      required:
+      - id
+      - name
+      - issuer
+      - statementDay
+      - dueDay
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        issuer:
+          $ref: '#/components/schemas/Name'
+        statementDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        dueDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    CreditCardCreate:
+      type: object
+      required:
+      - name
+      - issuer
+      - statementDay
+      - dueDay
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        issuer:
+          $ref: '#/components/schemas/Name'
+        statementDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        dueDay:
+          $ref: '#/components/schemas/DayOfMonth'
+      additionalProperties: false
+    CreditCardUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        issuer:
+          $ref: '#/components/schemas/Name'
+        statementDay:
+          $ref: '#/components/schemas/DayOfMonth'
+        dueDay:
+          $ref: '#/components/schemas/DayOfMonth'
+      additionalProperties: false
+      minProperties: 1
+    CreditCardList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CreditCard'
+      additionalProperties: false
+    CardChargeTotal:
+      type: object
+      required:
+      - cardId
+      - cardName
+      - total
+      properties:
+        cardId:
+          description: Null groups charges whose card was deleted.
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        cardName:
+          type:
+          - string
+          - 'null'
+        total:
+          $ref: '#/components/schemas/NonNegativeMoney'
+      additionalProperties: false
+    CardChargeTotals:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CardChargeTotal'
+        total:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Informational; excluded from every cash KPI (D3).
+      additionalProperties: false
+    Person:
+      type: object
+      required:
+      - id
+      - name
+      - isOwner
+      - billingMonths
+      - monthlyOwed
+      - lastPaymentDate
+      - coveredUntil
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        isOwner:
+          type: boolean
+        billingMonths:
+          $ref: '#/components/schemas/BillingMonths'
+        monthlyOwed:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Sum of this person's rounded platform shares (D10). Always 0 for the owner.
+        lastPaymentDate:
+          oneOf:
+          - $ref: '#/components/schemas/Date'
+          - type: 'null'
+        coveredUntil:
+          description: Last day covered by the latest payment (D8).
+          oneOf:
+          - $ref: '#/components/schemas/Date'
+          - type: 'null'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    PersonCreate:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        isOwner:
+          type: boolean
+          default: false
+        billingMonths:
+          allOf:
+          - $ref: '#/components/schemas/BillingMonths'
+          default: 1
+      additionalProperties: false
+    PersonUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        isOwner:
+          type: boolean
+        billingMonths:
+          $ref: '#/components/schemas/BillingMonths'
+      additionalProperties: false
+      minProperties: 1
+    PersonList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Person'
+      additionalProperties: false
+    PlatformPayment:
+      type: object
+      required:
+      - id
+      - personId
+      - paidAt
+      - monthsCovered
+      - amount
+      - coveredUntil
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        personId:
+          $ref: '#/components/schemas/Id'
+        paidAt:
+          $ref: '#/components/schemas/Date'
+        monthsCovered:
+          $ref: '#/components/schemas/BillingMonths'
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: The person's monthly amount owed at payment time, times `monthsCovered`.
+        coveredUntil:
+          allOf:
+          - $ref: '#/components/schemas/Date'
+          description: Last day of the last covered month, counting the month of `paidAt` (D8).
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    PlatformPaymentCreate:
+      type: object
+      required:
+      - paidAt
+      properties:
+        paidAt:
+          $ref: '#/components/schemas/Date'
+        monthsCovered:
+          allOf:
+          - $ref: '#/components/schemas/BillingMonths'
+          description: Defaults to the person's `billingMonths`.
+      additionalProperties: false
+    PlatformPaymentList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformPayment'
+      additionalProperties: false
+    PlatformMember:
+      type: object
+      required:
+      - personId
+      - name
+      properties:
+        personId:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+      additionalProperties: false
+    Platform:
+      type: object
+      required:
+      - id
+      - name
+      - monthlyCost
+      - cardId
+      - sharePerMember
+      - members
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        monthlyCost:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        sharePerMember:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: Cost divided by members, rounded up to the whole peso (D10). 0 without members.
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformMember'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        updatedAt:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    PlatformCreate:
+      type: object
+      required:
+      - name
+      - monthlyCost
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        monthlyCost:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+    PlatformUpdate:
+      type: object
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        monthlyCost:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        cardId:
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+      additionalProperties: false
+      minProperties: 1
+    PlatformList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Platform'
+      additionalProperties: false
+    DashboardKpis:
+      type: object
+      required:
+      - currentTotal
+      - toPay
+      - toReceive
+      - surplus
+      - savings
+      - incoming
+      - outgoing
+      - balance
+      properties:
+        currentTotal:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Total actual: sum of non-savings balances now (D6, D9).'
+        toPay:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Por pagar: pending fixed + occasional items of the month (D1). Excludes card charges
+            (D3) and overdue items (D7).'
+        toReceive:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Por llegar: pending income items of the month (D1). Excludes overdue items (D7).'
+        surplus:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Sobrante: currentTotal - toPay + toReceive.'
+        savings:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Ahorro: sum of savings balances now (D9).'
+        incoming:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Llega: all income items of the month, whatever their status (D2).'
+        outgoing:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Se va: all fixed + occasional items of the month, whatever their status (D2, D3).'
+        balance:
+          allOf:
+          - $ref: '#/components/schemas/Money'
+          description: 'Balance: incoming - outgoing (D2).'
+      additionalProperties: false
+    ToPayBreakdown:
+      type: object
+      description: Pending amounts behind `toPay`, for the donut chart.
+      required:
+      - fixed
+      - occasional
+      properties:
+        fixed:
+          $ref: '#/components/schemas/NonNegativeMoney'
+        occasional:
+          $ref: '#/components/schemas/NonNegativeMoney'
+      additionalProperties: false
+    Dashboard:
+      type: object
+      description: Every number is computed by the backend (D1).
+      required:
+      - period
+      - kpis
+      - toPayBreakdown
+      - accounts
+      - items
+      - upcomingDue
+      - cardCharges
+      - platforms
+      - people
+      - overdue
+      properties:
+        period:
+          $ref: '#/components/schemas/Period'
+        kpis:
+          $ref: '#/components/schemas/DashboardKpis'
+        toPayBreakdown:
+          $ref: '#/components/schemas/ToPayBreakdown'
+        accounts:
+          $ref: '#/components/schemas/AccountList'
+        items:
+          $ref: '#/components/schemas/PeriodItemList'
+        upcomingDue:
+          type: array
+          items:
+            $ref: '#/components/schemas/PeriodItem'
+          description: Pending fixed and occasional items of the month, soonest due first.
+        cardCharges:
+          $ref: '#/components/schemas/CardChargeTotals'
+        platforms:
+          $ref: '#/components/schemas/PlatformList'
+        people:
+          $ref: '#/components/schemas/PersonList'
+        overdue:
+          $ref: '#/components/schemas/OverdueItemList'
+      additionalProperties: false

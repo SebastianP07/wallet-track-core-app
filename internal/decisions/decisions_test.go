@@ -17,7 +17,7 @@ func TestBusinessDecisions(t *testing.T) {
 		{"D4_one_income_item_per_owing_platform_member", 9, "members still covered by their last payment get no item"},
 		{"D5_tags_never_affect_totals", 6, "at most one optional tag per item; lists filter by tag"},
 		{"D6_paying_an_item_never_changes_a_balance", 4, "Total actual = sum of current non-savings balances"},
-		{"D7_closing_a_month_marks_unsettled_items_overdue", 5, "pending items become overdue; none are carried over or deleted"},
+		{"D7_closing_a_month_marks_unsettled_items_overdue", 5, "pending expense and income items become overdue; none are carried over or deleted"},
 		{"D7_overdue_items_stay_out_of_current_totals", 10, "marking one done keeps it in its original month"},
 		{"D8_member_owes_again_when_coverage_ends", 9, "a semiannual member paid in month M owes again in M+6"},
 		{"D9_savings_accounts_are_excluded_from_total_actual", 4, "Ahorro = sum of savings balances"},
