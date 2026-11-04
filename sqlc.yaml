@@ -9,3 +9,11 @@ sql:
         package: sqlcgen
         out: internal/accounts/adapters/postgres/sqlcgen
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: migrations
+    queries: queries/auth
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/auth/adapters/postgres/sqlcgen
+        sql_package: pgx/v5

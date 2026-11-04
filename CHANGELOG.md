@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 — 2026-11-04 — Auth backend
+
+- Added `internal/auth`: password login, TOTP second factor, MFA enrollment gated by a one-time secret, recovery
+  codes, logout, logout-all and `GET /me`, under `/api/v1` as the contract says.
+- Added `cmd/admin` with `create-owner`, `reset-password` and `rotate-totp-key`, and `make admin`. Passwords come
+  from a no-echo prompt or stdin, never a flag.
+- Passwords use Argon2id with `PASSWORD_PEPPER`. TOTP secrets use AES-256-GCM with a `totp_key_id` derived from
+  the key. Replayed TOTP codes are rejected through `users.last_totp_step`.
+- Sessions: opaque token, only its SHA-256 stored, `__Host-session`, 7-day idle and 30-day absolute expiry, a
+  10-minute limit before the second factor, token rotation after it.
+- Added middleware: session auth, double-submit CSRF with an `Origin` check, per-IP token buckets (IPv6 by /64), a
+  per-account bucket on the steps behind the password, security headers, request IDs and one log line per request.
+- Added exponential lockout, from 1 minute after 5 failures up to 1 hour. Password failures count per email and
+  client IP in memory, on one code path for known and unknown emails, and never touch the account's lockout
+  columns, so nobody without the password can lock the owner out. TOTP and recovery-code failures lock the account
+  in the database.
+- The server refuses to start with `INSECURE_DEV_COOKIES=true` and a non-local origin in `ALLOWED_ORIGINS`.
+- Added the `auth_events` audit log. Passwords, tokens, secrets and codes are never logged.
+- Added `TOTP_ENC_KEY_PREVIOUS`, `TRUSTED_PROXIES`, `ALLOWED_ORIGINS` and `INSECURE_DEV_COOKIES`; `make dev` now
+  also receives `DATABASE_URL`.
+- Contract: added the missing 429 to `startMfaEnrollment`.
+- HIBP password checking, optional in the plan, is not implemented. No new automated tests (T7).
+
 ## 0.2.0 — 2026-11-04 — Contract and schema
 
 - Added `contracts/openapi.yaml`, OpenAPI 3.1 v1 for every module, linted with Redocly CLI.

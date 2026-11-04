@@ -6,11 +6,30 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/crypto"
+	authhttp "github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/http"
+	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/memory"
+	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/postgres"
+	"github.com/SebastianP07/wallet-track-core-app/internal/auth/application"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/platform"
+)
+
+const (
+	credentialsBurstPerIP      = 20
+	credentialsRefillPerIP     = 6 * time.Second
+	csrfBurstPerIP             = 60
+	csrfRefillPerIP            = time.Second
+	credentialsBurstPerAccount = 10
+	credentialsRefillPerAcct   = 30 * time.Second
 )
 
 func main() {
@@ -25,17 +44,48 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	appCfg, err := platform.LoadAppConfig(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	edgeCfg, err := platform.LoadEdgeConfig(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	logger := platform.NewLogger(os.Stdout, cfg.LogLevel)
+	if edgeCfg.InsecureDevCookies {
+		if err := requireLocalOrigins(edgeCfg.AllowedOrigins); err != nil {
+			return err
+		}
+		logger.Warn("INSECURE_DEV_COOKIES is on: cookies lose Secure and the __Host- prefix; never use this outside local development")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	pool, err := platform.NewPool(ctx, appCfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	authHandler, err := newAuthHandler(pool, appCfg, edgeCfg, logger)
+	if err != nil {
+		return err
+	}
 
 	listener, err := new(net.ListenConfig).Listen(ctx, "tcp", cfg.HTTPAddr)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
 
-	server := platform.NewHTTPServer(platform.NewRouter())
+	router := platform.Chain(
+		platform.NewRouter(authHandler.Register),
+		platform.RequestID,
+		platform.LogRequests(logger),
+		platform.SecurityHeaders,
+	)
+	server := platform.NewHTTPServer(router)
 	logger.Info("server started", "addr", listener.Addr().String())
 	if err := platform.Serve(ctx, server, listener, cfg.ShutdownTimeout); err != nil {
 		return err
@@ -43,3 +93,67 @@ func run() error {
 	logger.Info("server stopped")
 	return nil
 }
+
+// requireLocalOrigins stops a deployed server from running with dev cookies by accident: a public
+// origin in the list is the sign that this is not a local machine.
+func requireLocalOrigins(origins []string) error {
+	for _, origin := range origins {
+		parsed, err := url.Parse(origin)
+		if err != nil || !isLocalHost(parsed.Hostname()) {
+			return fmt.Errorf("INSECURE_DEV_COOKIES=true is for local development only, but ALLOWED_ORIGINS has the non-local origin %q", origin)
+		}
+	}
+	return nil
+}
+
+func isLocalHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platform.EdgeConfig, logger *slog.Logger) (*authhttp.Handler, error) {
+	keyring, err := crypto.NewKeyring(appCfg.TOTPKey, appCfg.PreviousTOTPKey)
+	if err != nil {
+		return nil, fmt.Errorf("load TOTP keys: %w", err)
+	}
+	deps := application.Deps{
+		Repo:     postgres.NewRepository(pool),
+		Tx:       postgres.NewTxManager(pool),
+		Clock:    crypto.Clock{},
+		Hasher:   crypto.NewHasher(appCfg.PasswordPepper),
+		TOTP:     crypto.TOTP{},
+		Tokens:   crypto.Tokens{},
+		Cipher:   keyring,
+		Attempts: memory.NewPasswordAttempts(),
+	}
+	loginPassword, err := application.NewLoginWithPassword(deps)
+	if err != nil {
+		return nil, err
+	}
+
+	cookies := platform.NewCookiePolicy(edgeCfg.InsecureDevCookies)
+	return authhttp.NewHandler(authhttp.Config{
+		UseCases: authhttp.UseCases{
+			Authenticate:    application.NewAuthenticateSession(deps),
+			LoginPassword:   loginPassword,
+			LoginTOTP:       application.NewLoginWithTOTP(deps),
+			LoginRecovery:   application.NewLoginWithRecoveryCode(deps),
+			StartEnrollment: application.NewStartMFAEnrollment(deps),
+			ConfirmEnroll:   application.NewConfirmMFAEnrollment(deps),
+			RecoveryStatus:  application.NewGetRecoveryCodeStatus(deps),
+			RegenerateCodes: application.NewRegenerateRecoveryCodes(deps),
+			Logout:          application.NewLogout(deps),
+			LogoutAll:       application.NewLogoutAll(deps),
+		},
+		Limits: authhttp.Limits{
+			CredentialsByIP: platform.NewTokenBucket(credentialsBurstPerIP, credentialsRefillPerIP),
+			CSRFByIP:        platform.NewTokenBucket(csrfBurstPerIP, csrfRefillPerIP),
+			ByAccount:       platform.NewTokenBucket(credentialsBurstPerAccount, credentialsRefillPerAcct),
+		},
+		Cookies:  cookies,
+		CSRF:     platform.NewCSRF(cookies, edgeCfg.AllowedOrigins),
+		ClientIP: platform.NewClientIPResolver(edgeCfg.TrustedProxies),
+		Logger:   logger,
+	}), nil
+}
+
+var _ http.Handler = http.NewServeMux()

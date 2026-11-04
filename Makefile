@@ -18,14 +18,20 @@ export GOTOOLCHAIN ?= auto
 # Nothing is exported by default: each target below receives only what it needs, so secrets never
 # reach third-party tools. unexport also drops values make would inherit from the calling shell.
 # It must follow the ?= defaults, because it defines a missing variable as empty.
-unexport TOTP_ENC_KEY PASSWORD_PEPPER POSTGRES_PASSWORD DATABASE_URL GOOSE_DBSTRING
+unexport TOTP_ENC_KEY TOTP_ENC_KEY_PREVIOUS PASSWORD_PEPPER POSTGRES_PASSWORD DATABASE_URL GOOSE_DBSTRING
 
-# The only recipe that receives the application secrets, read from Phase 2 on.
 dev: export HTTP_ADDR := $(HTTP_ADDR)
 dev: export LOG_LEVEL := $(LOG_LEVEL)
 dev: export SHUTDOWN_TIMEOUT := $(SHUTDOWN_TIMEOUT)
-dev: export TOTP_ENC_KEY := $(TOTP_ENC_KEY)
-dev: export PASSWORD_PEPPER := $(PASSWORD_PEPPER)
+dev: export TRUSTED_PROXIES := $(TRUSTED_PROXIES)
+dev: export ALLOWED_ORIGINS := $(ALLOWED_ORIGINS)
+dev: export INSECURE_DEV_COOKIES := $(INSECURE_DEV_COOKIES)
+
+# The only recipes that receive the application secrets.
+dev admin: export DATABASE_URL := $(DATABASE_URL)
+dev admin: export TOTP_ENC_KEY := $(TOTP_ENC_KEY)
+dev admin: export TOTP_ENC_KEY_PREVIOUS := $(TOTP_ENC_KEY_PREVIOUS)
+dev admin: export PASSWORD_PEPPER := $(PASSWORD_PEPPER)
 
 # Passed through the environment so the connection string never appears in make's output.
 migrate migrate-down migrate-status: export GOOSE_DRIVER := postgres
@@ -40,7 +46,7 @@ db-up db-down: export POSTGRES_PORT := $(POSTGRES_PORT)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help dev test lint migrate migrate-down migrate-status sqlc seed contract-lint db-up db-down keys
+.PHONY: help dev admin test lint migrate migrate-down migrate-status sqlc seed contract-lint db-up db-down keys
 
 help: ## List available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-z-]+:.*## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -48,6 +54,9 @@ help: ## List available targets
 dev: ## Build and run the API server
 	go build -o bin/server ./cmd/server
 	exec ./bin/server
+
+admin: ## Run cmd/admin, e.g. make admin ARGS="create-owner --email you@example.com"
+	@go run ./cmd/admin $(ARGS)
 
 test: ## Run all tests
 	go test ./...

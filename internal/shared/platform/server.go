@@ -9,9 +9,13 @@ import (
 	"time"
 )
 
-func NewRouter() http.Handler {
+// NewRouter serves /healthz plus whatever each module registers.
+func NewRouter(registrars ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
+	for _, register := range registrars {
+		register(mux)
+	}
 	return mux
 }
 
