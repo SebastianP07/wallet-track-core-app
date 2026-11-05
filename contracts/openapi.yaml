@@ -2758,7 +2758,8 @@ components:
         surplus:
           allOf:
           - $ref: '#/components/schemas/Money'
-          description: 'Sobrante: currentTotal - toPay + toReceive.'
+          description: 'Sobrante: currentTotal - toPay + toReceive, stopping at the money bound in either direction.
+            Writes bound balances and items apart, not this sum.'
         savings:
           allOf:
           - $ref: '#/components/schemas/Money'

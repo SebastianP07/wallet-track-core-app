@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0 — 2026-11-05 — Dashboard
+
+- Added `internal/dashboard` and `GET /api/v1/dashboard?period=`, with a full session: KPIs, the to-pay breakdown, the upcoming
+  due list and every section of the month in its own endpoint's shape. It reads other modules through application ports only,
+  with adapters in `cmd/server/dashboard.go`. A month not opened is a 404, a bad `period` a 400.
+- Total actual and Ahorro are today's balances, in any month (D6, D9). Por pagar and Por llegar read pending items only; Llega
+  and Se va read every status (D2). So an overdue item of the selected month stays in Llega, Se va and Balance and leaves Por
+  pagar, Por llegar and Sobrante, and a closed month's Sobrante equals today's Total actual. Card charges and other months'
+  items reach none of them (D3, D7).
+- `surplus` stops at `kernel.MaxMoney` in either direction, as the overdue totals do: writes bound balances and items apart,
+  not this sum, and an error would take down the page where it gets fixed. The contract's description now says so; the schema
+  is unchanged. The month's write checks already keep `incoming`, `outgoing` and `balance` within the bound.
+- `upcomingDue` orders by due date, then name, then id, so a tie holds still between refetches.
+- No migrations. No new automated tests (T7).
+
 ## 0.12.0 — 2026-11-05 — Overdue list
 
 - `GET /api/v1/overdue-items`, with a full session: every `overdue` fixed, occasional and income item of a closed month,

@@ -109,6 +109,7 @@ func run() error {
 			newExpensesHandler(pool, authHandler, logger).Register,
 			newTagsHandler(pool, authHandler, logger).Register,
 			newPlatformsHandler(pool, authHandler, logger).Register,
+			newDashboardHandler(pool, authHandler, logger).Register,
 		),
 		platform.RequestID,
 		platform.LogRequests(logger),

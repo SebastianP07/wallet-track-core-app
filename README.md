@@ -117,6 +117,20 @@ Other operator commands:
 - The list has no writes of its own: the item's done endpoints settle it. It stays in its original month and leaves the
   list; undo returns it. A person-linked item records its payment as described below.
 
+## Dashboard
+
+- `GET /dashboard?period=` is one aggregated read: `kpis`, `toPayBreakdown`, `upcomingDue`, and every section in the shape it
+  has at its own endpoint. `internal/dashboard` reaches other modules only through its application ports, wired in
+  `cmd/server/dashboard.go`.
+- `currentTotal` and `savings` are today's balances, so a past or closed month shows the same ones as any other (D6, D9).
+- An overdue item of the selected month is in `incoming` and `outgoing`, which read every status (D2), and out of `toPay` and
+  `toReceive`, which read only what is pending (D7). So a closed month has `toPay` and `toReceive` at 0, and its `surplus`
+  equals today's `currentTotal`. Other months' items and card charges reach no KPI (D3, D7).
+- `surplus` stops at `kernel.MaxMoney` in either direction. Writes bound balances and items apart, not this sum, and an error
+  would take down the page where the user fixes it. Writes keep `incoming`, `outgoing` and `balance` within the bound already.
+- A month not opened is a 404, as the contract says, so its balances come from `GET /accounts`.
+- `upcomingDue` is the month's pending fixed and occasional items by due date, then name. Each item carries its urgency (D11).
+
 ## Platform behavior worth knowing
 
 - A share is ⌈cost ÷ members⌉ in whole pesos (D10). An owner who is a member counts in the divisor, owes 0, gets no income
@@ -205,6 +219,7 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `internal/tags` | Tags (D5): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/cards` | Credit cards and a month's per-card totals (D3): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/platforms` | People, platforms, memberships and payments (D4, D8, D10), reached by `periods` and `expenses` only through application ports wired in `cmd/server`: `domain`, `application` and `adapters/{http,postgres}` |
+| `internal/dashboard` | The KPIs (D1, D2, D3, D7, D9) and the one read that gathers every section, in its own types, reading other modules only through application ports wired in `cmd/server`: `domain`, `application` and `adapters/http` |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
 | `internal/shared/platform` | Config, logging, the system clock, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |
