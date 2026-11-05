@@ -217,9 +217,18 @@ func newPeriodsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.
 }
 
 func newCardsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *cardshttp.Handler {
+	repo := cardspostgres.NewRepository(pool)
 	return cardshttp.NewHandler(cardshttp.Config{
-		List:           cardsapplication.NewListCards(cardspostgres.NewRepository(pool)),
+		UseCases: cardshttp.UseCases{
+			List:   cardsapplication.NewListCards(repo),
+			Get:    cardsapplication.NewGetCard(repo),
+			Create: cardsapplication.NewCreateCard(repo),
+			Update: cardsapplication.NewUpdateCard(repo),
+			Delete: cardsapplication.NewDeleteCard(repo),
+			Totals: cardsapplication.NewGetCardTotals(repo),
+		},
 		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
 		Logger:         logger,
 	})
 }

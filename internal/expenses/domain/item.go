@@ -1,6 +1,5 @@
-// Package domain holds the rules of a month's expense and income items: urgency (D11), Por pagar and
-// Por llegar (D1) and the done toggle (D7). Card charge rows are read and totaled, but Phase 8 owns
-// writing them.
+// Package domain holds the rules of a month's items: urgency (D11), Por pagar and Por llegar (D1), the
+// done toggle (D7) and card charges, which are informational and stay out of both (D3).
 package domain
 
 import (
@@ -26,7 +25,11 @@ const dueDateMessage = "must be a date as YYYY-MM-DD, from 2000-01-01 on"
 
 const totalOutOfRangeMessage = "would take this month's total beyond 9007199254740991"
 
-var incomeDueDateViolation = Violation{Field: "dueDate", Message: "income items have no due date"}
+var (
+	incomeDueDateViolation     = Violation{Field: "dueDate", Message: "income items have no due date"}
+	cardChargeDueDateViolation = Violation{Field: "dueDate", Message: "card charge items have no due date"}
+	cardOnlyOnChargeViolation  = Violation{Field: "cardId", Message: "only card charge items have a card"}
+)
 
 var (
 	ErrPeriodNotFound = errors.New("period not found")
@@ -127,14 +130,6 @@ type Item struct {
 	UpdatedAt  time.Time
 }
 
-// RequireWritable keeps card charge rows out of reach until Phase 8.
-func (i Item) RequireWritable() error {
-	if i.Kind != ItemCardCharge {
-		return nil
-	}
-	return &ValidationError{Violations: []Violation{{Field: "kind", Message: "only fixed, occasional and income items can be changed here"}}}
-}
-
 // Done is idempotent: an item already done keeps the moment it was first done. Never touches a
 // balance (D6), and an overdue item stays in its month (D7).
 func (i Item) Done(now time.Time) Item {
@@ -186,19 +181,22 @@ type NewItemInput struct {
 	Name    string
 	Amount  int64
 	DueDate *string
+	CardID  OptionalID
 	TagID   *string
 }
 
-// NewItem is a valid pending item that has not been stored yet. Income has no DueDate.
+// NewItem is a valid pending item that has not been stored yet. Only expenses have a DueDate, and
+// only card charges a CardID.
 type NewItem struct {
 	Kind    ItemKind
 	Name    string
 	Amount  kernel.Money
 	DueDate *time.Time
+	CardID  *string
 	TagID   *string
 }
 
-// CreateNewItem validates a new item. Card charges are refused until Phase 8.
+// CreateNewItem validates a new item.
 func CreateNewItem(input NewItemInput) (NewItem, error) {
 	var violations []Violation
 	item := NewItem{TagID: input.TagID}
@@ -212,8 +210,20 @@ func CreateNewItem(input NewItemInput) (NewItem, error) {
 		if input.DueDate != nil {
 			violations = append(violations, incomeDueDateViolation)
 		}
+	case kind == ItemCardCharge:
+		item.Kind = kind
+		item.CardID = input.CardID.Value
+		if input.DueDate != nil {
+			violations = append(violations, cardChargeDueDateViolation)
+		}
+		if item.CardID == nil {
+			violations = append(violations, Violation{Field: "cardId", Message: "is required on a card charge item"})
+		}
 	default:
-		violations = append(violations, Violation{Field: "kind", Message: "must be fixed, occasional or income"})
+		violations = append(violations, Violation{Field: "kind", Message: "must be one of fixed, occasional, income, card_charge"})
+	}
+	if input.CardID.Set && kind != ItemCardCharge {
+		violations = append(violations, cardOnlyOnChargeViolation)
 	}
 	item.Name, violations = checkName(input.Name, violations)
 	item.Amount, violations = checkAmount(input.Amount, violations)
@@ -274,11 +284,15 @@ func NewItemChanges(input ItemChangesInput) (ItemChanges, error) {
 
 // ApplyTo returns the item with the changes made, or why they do not fit its kind.
 func (c ItemChanges) ApplyTo(item Item) (Item, error) {
-	if c.cardID.Value != nil {
-		return Item{}, &ValidationError{Violations: []Violation{{Field: "cardId", Message: "only card charge items have a card"}}}
-	}
-	if c.dueDate != nil && item.Kind == ItemIncome {
+	switch {
+	case item.Kind == ItemCardCharge && c.cardID.Set && c.cardID.Value == nil:
+		return Item{}, &ValidationError{Violations: []Violation{{Field: "cardId", Message: "a card charge item cannot have its card removed"}}}
+	case item.Kind != ItemCardCharge && c.cardID.Value != nil:
+		return Item{}, &ValidationError{Violations: []Violation{cardOnlyOnChargeViolation}}
+	case c.dueDate != nil && item.Kind == ItemIncome:
 		return Item{}, &ValidationError{Violations: []Violation{incomeDueDateViolation}}
+	case c.dueDate != nil && item.Kind == ItemCardCharge:
+		return Item{}, &ValidationError{Violations: []Violation{cardChargeDueDateViolation}}
 	}
 	if c.name != nil {
 		item.Name = *c.name
@@ -288,6 +302,9 @@ func (c ItemChanges) ApplyTo(item Item) (Item, error) {
 	}
 	if c.dueDate != nil {
 		item.DueDate = c.dueDate
+	}
+	if c.cardID.Set && item.Kind == ItemCardCharge {
+		item.CardID = c.cardID.Value
 	}
 	if c.tagID.Set {
 		item.TagID = c.tagID.Value

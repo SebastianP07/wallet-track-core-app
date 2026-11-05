@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.10.0 — 2026-11-04 — Credit cards
+
+- `internal/cards` now covers the contract: create, get, edit and delete under `/api/v1/credit-cards`, with a full session
+  and, on mutations, CSRF. Names and issuers follow the same rules as other names; statement and due days are plain
+  integers from 1 to 31.
+- Deleting a card relies on what migration 00006 already does: a trigger deactivates its active `card_charge` templates and
+  the foreign keys clear the card on templates, items and platforms, all in that delete.
+- `GET /periods/{period}/card-totals` sums every card charge of the month, whatever its status, in one statement. Every
+  card has a row, with total 0 if it has no charges. Charges whose card was deleted form one last row with null `cardId`
+  and `cardName`, only when there are any, and count toward `total`. A month not opened is a 404.
+- Item writes now accept `kind=card_charge`, by extending `internal/expenses`: `cardId` is required on create and must name
+  an existing card, and `dueDate` is a 400. On an edit, `cardId` moves a charge to another card, including one whose card
+  was deleted, and null is a 400. Other kinds still refuse a card. `RequireWritable` is gone.
+- Done on a card charge moves no total but `totals.cardCharge.pending`. Undo always returns it to `pending`, in a closed
+  month too. Closing a month still leaves it as it is (D3).
+- D3 confirmed: `totals.toPay` and `totals.toReceive` read only fixed, occasional and income rows, and were checked unchanged
+  by every card charge write. `Se va` and `Balance` do not exist until Phase 11.
+- Contract: no schema change; `PeriodItemUpdate`, `card-totals` and the done endpoint document the above. No migrations. No
+  new automated tests (T7).
+
 ## 0.9.0 — 2026-11-04 — Income
 
 - Income items can be added, edited, deleted and toggled through the existing item endpoints, by extending

@@ -23,9 +23,10 @@ var (
 	_ application.TxManager  = (*TxManager)(nil)
 )
 
-// What a refused item write means, for the one rule only the database can check at write time.
+// What a refused item write means, for the rules only the database can check at write time.
 var itemConstraints = map[string]domain.Violation{
-	"period_items_tag_id_fkey": {Field: "tagId", Message: "must be an existing tag"},
+	"period_items_tag_id_fkey":  {Field: "tagId", Message: "must be an existing tag"},
+	"period_items_card_id_fkey": {Field: "cardId", Message: "must be an existing card"},
 }
 
 type TxManager struct {
@@ -112,6 +113,10 @@ func (r *Repository) CreateItem(ctx context.Context, periodID string, item domai
 	if err != nil {
 		return domain.Item{}, err
 	}
+	cardID, err := parseOptionalID(item.CardID)
+	if err != nil {
+		return domain.Item{}, err
+	}
 	tagID, err := parseOptionalID(item.TagID)
 	if err != nil {
 		return domain.Item{}, err
@@ -122,6 +127,7 @@ func (r *Repository) CreateItem(ctx context.Context, periodID string, item domai
 		Name:     item.Name,
 		Amount:   int64(item.Amount),
 		DueDate:  toDate(item.DueDate),
+		CardID:   cardID,
 		TagID:    tagID,
 	})
 	if err != nil {

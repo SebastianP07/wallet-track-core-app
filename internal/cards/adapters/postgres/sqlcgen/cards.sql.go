@@ -7,7 +7,94 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createCard = `-- name: CreateCard :one
+INSERT INTO credit_cards (name, issuer, statement_day, due_day)
+VALUES ($1, $2, $3, $4)
+RETURNING id, name, issuer, statement_day, due_day, created_at, updated_at
+`
+
+type CreateCardParams struct {
+	Name         string
+	Issuer       string
+	StatementDay int16
+	DueDay       int16
+}
+
+func (q *Queries) CreateCard(ctx context.Context, arg CreateCardParams) (CreditCard, error) {
+	row := q.db.QueryRow(ctx, createCard,
+		arg.Name,
+		arg.Issuer,
+		arg.StatementDay,
+		arg.DueDay,
+	)
+	var i CreditCard
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Issuer,
+		&i.StatementDay,
+		&i.DueDay,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteCard = `-- name: DeleteCard :execrows
+DELETE FROM credit_cards
+WHERE id = $1
+`
+
+func (q *Queries) DeleteCard(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteCard, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getCard = `-- name: GetCard :one
+SELECT id, name, issuer, statement_day, due_day, created_at, updated_at
+FROM credit_cards
+WHERE id = $1
+`
+
+func (q *Queries) GetCard(ctx context.Context, id pgtype.UUID) (CreditCard, error) {
+	row := q.db.QueryRow(ctx, getCard, id)
+	var i CreditCard
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Issuer,
+		&i.StatementDay,
+		&i.DueDay,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPeriodID = `-- name: GetPeriodID :one
+SELECT id
+FROM periods
+WHERE year = $1 AND month = $2
+`
+
+type GetPeriodIDParams struct {
+	Year  int32
+	Month int32
+}
+
+func (q *Queries) GetPeriodID(ctx context.Context, arg GetPeriodIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getPeriodID, arg.Year, arg.Month)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
 
 const listCards = `-- name: ListCards :many
 SELECT id, name, issuer, statement_day, due_day, created_at, updated_at
@@ -41,4 +128,83 @@ func (q *Queries) ListCards(ctx context.Context) ([]CreditCard, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const sumCardCharges = `-- name: SumCardCharges :many
+SELECT c.id AS card_id, c.name AS card_name, COALESCE(SUM(charge.amount), 0)::bigint AS total
+FROM credit_cards AS c
+FULL JOIN (
+  SELECT i.card_id, i.amount
+  FROM period_items AS i
+  WHERE i.period_id = $1 AND i.kind = 'card_charge'
+) AS charge ON charge.card_id = c.id
+GROUP BY c.id, c.name
+ORDER BY c.name NULLS LAST, c.id
+`
+
+type SumCardChargesRow struct {
+	CardID   pgtype.UUID
+	CardName pgtype.Text
+	Total    int64
+}
+
+// The full join gives every card a row, even with no charges, and gathers the charges whose card was
+// deleted into one row with a null id, which exists only when there are such charges.
+func (q *Queries) SumCardCharges(ctx context.Context, periodID pgtype.UUID) ([]SumCardChargesRow, error) {
+	rows, err := q.db.Query(ctx, sumCardCharges, periodID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SumCardChargesRow
+	for rows.Next() {
+		var i SumCardChargesRow
+		if err := rows.Scan(&i.CardID, &i.CardName, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateCard = `-- name: UpdateCard :one
+UPDATE credit_cards
+SET name = COALESCE($1, name),
+  issuer = COALESCE($2, issuer),
+  statement_day = COALESCE($3, statement_day),
+  due_day = COALESCE($4, due_day)
+WHERE id = $5
+RETURNING id, name, issuer, statement_day, due_day, created_at, updated_at
+`
+
+type UpdateCardParams struct {
+	Name         pgtype.Text
+	Issuer       pgtype.Text
+	StatementDay pgtype.Int2
+	DueDay       pgtype.Int2
+	ID           pgtype.UUID
+}
+
+func (q *Queries) UpdateCard(ctx context.Context, arg UpdateCardParams) (CreditCard, error) {
+	row := q.db.QueryRow(ctx, updateCard,
+		arg.Name,
+		arg.Issuer,
+		arg.StatementDay,
+		arg.DueDay,
+		arg.ID,
+	)
+	var i CreditCard
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Issuer,
+		&i.StatementDay,
+		&i.DueDay,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

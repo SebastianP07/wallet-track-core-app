@@ -1,5 +1,5 @@
-// Package http is the inbound HTTP adapter of the expenses module: a month's items, income included,
-// and their done toggle.
+// Package http is the inbound HTTP adapter of the expenses module: a month's items of every kind and
+// their done toggle.
 package http
 
 import (
@@ -245,15 +245,13 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 		Kind:    requiredString(body.Kind, "kind", &fields),
 		Name:    requiredString(body.Name, "name", &fields),
 		DueDate: presentDate(body.DueDate),
+		CardID:  nullableID(body.CardID, "cardId", &fields),
 		TagID:   nullableID(body.TagID, "tagId", &fields).Value,
 	}
 	if body.Amount == nil {
 		fields = append(fields, platform.FieldError{Field: "amount", Message: "is required"})
 	} else if amount := optionalAmount(body.Amount, &fields); amount != nil {
 		input.Amount = *amount
-	}
-	if body.CardID != nil {
-		fields = append(fields, platform.FieldError{Field: "cardId", Message: "only card charge items have a card"})
 	}
 	if body.Status != nil {
 		fields = append(fields, platform.FieldError{Field: "status", Message: "cannot be set"})

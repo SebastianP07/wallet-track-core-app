@@ -89,8 +89,13 @@ Other operator commands:
 
 ## Item behavior worth knowing
 
-- Writes accept kinds `fixed`, `occasional` and `income`. Card charge rows can be read and are totaled, but changing one
-  through these endpoints is a 400 on `kind` until Phase 8.
+- Writes accept every kind. A card charge needs an existing `cardId` and has no due date. An edit can move it to another
+  card, including one whose card was deleted, but `cardId: null` is a 400. Other kinds refuse a card.
+- Card charges are informational (D3): they never count toward `totals.toPay` or `totals.toReceive`, and closing a month
+  leaves them as they are. Done moves only `totals.cardCharge.pending`, and undo always returns one to `pending`.
+- `GET /periods/{period}/card-totals` counts every card charge of the month, whatever its status. Every card has a row, with
+  0 if it has no charges. Charges whose card was deleted form one last row with a null card, only when there are any, and
+  count toward `total`.
 - Income has no due date and no urgency: sending `dueDate` for it is a 400, on a create or an edit. `personId` cannot be
   set through these endpoints; Phase 9 generates those rows (D4).
 - `totals.toReceive` is Por llegar and `totals.toPay` is Por pagar (D1). Neither moves the other, and received, paid and
@@ -164,9 +169,9 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1), `YearMonth`, from 2000-01 on, with the due day clamp (D11), and `DateInBogota` |
 | `internal/accounts` | Accounts and savings: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
 | `internal/periods` | Periods and recurring templates: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
-| `internal/expenses` | A month's items, income included, and their done toggle, with urgency (D11), Por pagar and Por llegar (D1): `domain`, `application` and `adapters/{http,postgres}` |
+| `internal/expenses` | A month's items of every kind and their done toggle, with urgency (D11), Por pagar and Por llegar (D1): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/tags` | Tags (D5): `domain`, `application` and `adapters/{http,postgres}` |
-| `internal/cards` | Credit cards, so far only the list that card selection needs; Phase 8 adds the rest |
+| `internal/cards` | Credit cards and a month's per-card totals (D3): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
 | `internal/shared/platform` | Config, logging, the system clock, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |

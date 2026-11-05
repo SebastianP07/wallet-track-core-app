@@ -32,8 +32,8 @@ JOIN periods AS p ON p.id = i.period_id
 WHERE i.id = $1;
 
 -- name: CreateItem :one
-INSERT INTO period_items (period_id, kind, name, amount, due_date, tag_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO period_items (period_id, kind, name, amount, due_date, card_id, tag_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id;
 
 -- name: UpdateItem :execrows

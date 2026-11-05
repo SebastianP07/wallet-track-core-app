@@ -138,9 +138,6 @@ func (u *UpdateItem) Execute(ctx context.Context, id string, changes domain.Item
 		if index < 0 {
 			return domain.ErrItemNotFound
 		}
-		if err := items[index].RequireWritable(); err != nil {
-			return err
-		}
 		changed, err := changes.ApplyTo(items[index])
 		if err != nil {
 			return err
@@ -169,13 +166,6 @@ func NewDeleteItem(tx TxManager) *DeleteItem {
 func (u *DeleteItem) Execute(ctx context.Context, id string) error {
 	return u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
 		if _, err := repo.LockPeriodOfItem(ctx, id); err != nil {
-			return err
-		}
-		item, err := repo.GetItem(ctx, id)
-		if err != nil {
-			return err
-		}
-		if err := item.RequireWritable(); err != nil {
 			return err
 		}
 		found, err := repo.DeleteItem(ctx, id)
@@ -234,9 +224,6 @@ func changeStatus(
 		}
 		item, err := repo.GetItem(ctx, id)
 		if err != nil {
-			return err
-		}
-		if err := item.RequireWritable(); err != nil {
 			return err
 		}
 		result = change(item, period)

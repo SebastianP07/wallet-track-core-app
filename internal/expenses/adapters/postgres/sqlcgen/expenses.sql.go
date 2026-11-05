@@ -12,8 +12,8 @@ import (
 )
 
 const createItem = `-- name: CreateItem :one
-INSERT INTO period_items (period_id, kind, name, amount, due_date, tag_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO period_items (period_id, kind, name, amount, due_date, card_id, tag_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id
 `
 
@@ -23,6 +23,7 @@ type CreateItemParams struct {
 	Name     string
 	Amount   int64
 	DueDate  pgtype.Date
+	CardID   pgtype.UUID
 	TagID    pgtype.UUID
 }
 
@@ -33,6 +34,7 @@ func (q *Queries) CreateItem(ctx context.Context, arg CreateItemParams) (pgtype.
 		arg.Name,
 		arg.Amount,
 		arg.DueDate,
+		arg.CardID,
 		arg.TagID,
 	)
 	var id pgtype.UUID
