@@ -56,3 +56,11 @@ SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amou
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE p.year = $1 AND p.month = $2 AND i.person_id = $3 AND i.kind = 'income';
+
+-- name: ListOverdueItems :many
+SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
+  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+FROM period_items AS i
+JOIN periods AS p ON p.id = i.period_id
+WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind <> 'card_charge'
+ORDER BY p.year, p.month, i.due_date NULLS LAST, i.name, i.id;

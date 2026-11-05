@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0 — 2026-11-05 — Overdue list
+
+- `GET /api/v1/overdue-items`, with a full session: every `overdue` fixed, occasional and income item of a closed month,
+  oldest month first, with backend `expenseTotal` and `incomeTotal`. Pending items of open months and card charges never
+  appear (D3, D7), and no month's totals include these (D7).
+- Settling needed no change: the done endpoints already keep an overdue item in its month, undo returns it to `overdue`, and
+  a person-linked item records its payment dated within that month, so a late settlement still covers it (Phase 9).
+- `expenseTotal` and `incomeTotal` stop at `kernel.MaxMoney`. Writes bound each month, not the months together, and an error
+  would hide the rows that bring the sum back down. The contract's two descriptions now say so; the schema is unchanged.
+- No new automated tests (T7).
+
 ## 0.11.0 — 2026-11-05 — Shared platforms
 
 - Added `internal/platforms`: people, platforms, memberships and payments under the contract's routes, with a full session

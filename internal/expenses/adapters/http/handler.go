@@ -32,13 +32,14 @@ var (
 
 // UseCases are the operations this adapter exposes.
 type UseCases struct {
-	List   *application.ListItems
-	Get    *application.GetItem
-	Create *application.CreateItem
-	Update *application.UpdateItem
-	Delete *application.DeleteItem
-	Done   *application.MarkItemDone
-	Undone *application.UnmarkItemDone
+	List    *application.ListItems
+	Get     *application.GetItem
+	Create  *application.CreateItem
+	Update  *application.UpdateItem
+	Delete  *application.DeleteItem
+	Done    *application.MarkItemDone
+	Undone  *application.UnmarkItemDone
+	Overdue *application.ListOverdueItems
 }
 
 type Config struct {
@@ -57,7 +58,7 @@ func NewHandler(cfg Config) *Handler {
 	return &Handler{Config: cfg}
 }
 
-// Register adds the period item routes of the contract, except the overdue list (Phase 10).
+// Register adds the period item routes of the contract.
 func (h *Handler) Register(mux *http.ServeMux) {
 	read := func(pattern string, handler http.HandlerFunc) {
 		mux.Handle("GET "+basePath+pattern, platform.Chain(handler, h.RequireSession))
@@ -73,6 +74,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	write(http.MethodDelete, "/period-items/{id}", h.deleteItem)
 	write(http.MethodPut, "/period-items/{id}/done", h.markDone)
 	write(http.MethodDelete, "/period-items/{id}/done", h.unmarkDone)
+	read("/overdue-items", h.listOverdueItems)
 }
 
 type itemResponse struct {
@@ -110,6 +112,12 @@ type totalsResponse struct {
 type itemListResponse struct {
 	Items  []itemResponse `json:"items"`
 	Totals totalsResponse `json:"totals"`
+}
+
+type overdueListResponse struct {
+	Items        []itemResponse `json:"items"`
+	ExpenseTotal int64          `json:"expenseTotal"`
+	IncomeTotal  int64          `json:"incomeTotal"`
 }
 
 // itemBody keeps each field raw, so that a wrong type or a null is reported on its own field and an
@@ -180,6 +188,23 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 			ToPay:      int64(list.Totals.ToPay),
 			ToReceive:  int64(list.Totals.ToReceive),
 		},
+	})
+}
+
+func (h *Handler) listOverdueItems(w http.ResponseWriter, r *http.Request) {
+	list, err := h.UseCases.Overdue.Execute(r.Context())
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	items := make([]itemResponse, 0, len(list.Items))
+	for _, item := range list.Items {
+		items = append(items, toItemResponse(item))
+	}
+	platform.WriteJSON(w, http.StatusOK, overdueListResponse{
+		Items:        items,
+		ExpenseTotal: int64(list.Totals.Expense),
+		IncomeTotal:  int64(list.Totals.Income),
 	})
 }
 

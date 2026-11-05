@@ -74,3 +74,32 @@ func totalOf(items []Item, kind ItemKind) (KindTotal, error) {
 	}
 	return KindTotal{Total: total, Pending: pendingTotal}, nil
 }
+
+// OverdueTotals are the sums of the overdue list, across every closed month (D7).
+type OverdueTotals struct {
+	Expense kernel.Money
+	Income  kernel.Money
+}
+
+// ComputeOverdueTotals stops at kernel.MaxMoney instead of failing. Writes keep each month within that
+// bound, but nothing bounds the months together, and an error here would hide the very rows that bring
+// the sum back down.
+func ComputeOverdueTotals(items []Item) OverdueTotals {
+	var totals OverdueTotals
+	for _, item := range items {
+		switch {
+		case isExpense(item.Kind):
+			totals.Expense = addCapped(totals.Expense, item.Amount)
+		case item.Kind == ItemIncome:
+			totals.Income = addCapped(totals.Income, item.Amount)
+		}
+	}
+	return totals
+}
+
+func addCapped(sum, amount kernel.Money) kernel.Money {
+	if amount > kernel.MaxMoney-sum {
+		return kernel.MaxMoney
+	}
+	return sum + amount
+}

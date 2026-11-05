@@ -246,13 +246,14 @@ func newExpensesHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 	clock := platform.SystemClock{}
 	return expenseshttp.NewHandler(expenseshttp.Config{
 		UseCases: expenseshttp.UseCases{
-			List:   expensesapplication.NewListItems(repo, clock),
-			Get:    expensesapplication.NewGetItem(repo, clock),
-			Create: expensesapplication.NewCreateItem(tx, clock),
-			Update: expensesapplication.NewUpdateItem(tx, clock),
-			Delete: expensesapplication.NewDeleteItem(tx),
-			Done:   expensesapplication.NewMarkItemDone(tx, clock),
-			Undone: expensesapplication.NewUnmarkItemDone(tx, clock),
+			List:    expensesapplication.NewListItems(repo, clock),
+			Get:     expensesapplication.NewGetItem(repo, clock),
+			Create:  expensesapplication.NewCreateItem(tx, clock),
+			Update:  expensesapplication.NewUpdateItem(tx, clock),
+			Delete:  expensesapplication.NewDeleteItem(tx),
+			Done:    expensesapplication.NewMarkItemDone(tx, clock),
+			Undone:  expensesapplication.NewUnmarkItemDone(tx, clock),
+			Overdue: expensesapplication.NewListOverdueItems(repo, clock),
 		},
 		RequireSession: auth.RequireFullSession,
 		RequireCSRF:    auth.CSRF.Protect,

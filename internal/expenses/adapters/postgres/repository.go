@@ -103,6 +103,18 @@ func (r *Repository) ListItems(ctx context.Context, periodID string) ([]domain.I
 	return items, nil
 }
 
+func (r *Repository) ListOverdueItems(ctx context.Context) ([]domain.Item, error) {
+	rows, err := r.queries.ListOverdueItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.Item, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toItem(sqlcgen.GetItemRow(row)))
+	}
+	return items, nil
+}
+
 func (r *Repository) GetItem(ctx context.Context, id string) (domain.Item, error) {
 	uuid, err := parseID(id)
 	if err != nil {

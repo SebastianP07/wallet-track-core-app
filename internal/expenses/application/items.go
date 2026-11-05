@@ -59,6 +59,33 @@ func (u *ListItems) Execute(ctx context.Context, month kernel.YearMonth, filter 
 	return ItemList{Items: views, Totals: totals}, nil
 }
 
+// OverdueList is what closed months left unsettled, whichever month is being looked at (D7).
+type OverdueList struct {
+	Items  []ItemView
+	Totals domain.OverdueTotals
+}
+
+type ListOverdueItems struct {
+	repo  Repository
+	clock Clock
+}
+
+func NewListOverdueItems(repo Repository, clock Clock) *ListOverdueItems {
+	return &ListOverdueItems{repo: repo, clock: clock}
+}
+
+func (u *ListOverdueItems) Execute(ctx context.Context) (OverdueList, error) {
+	items, err := u.repo.ListOverdueItems(ctx)
+	if err != nil {
+		return OverdueList{}, fmt.Errorf("list overdue items: %w", err)
+	}
+	views := make([]ItemView, 0, len(items))
+	for _, item := range items {
+		views = append(views, view(item, u.clock))
+	}
+	return OverdueList{Items: views, Totals: domain.ComputeOverdueTotals(items)}, nil
+}
+
 type GetItem struct {
 	repo  Repository
 	clock Clock

@@ -108,6 +108,15 @@ Other operator commands:
 - A month's totals stay within `kernel.MaxMoney`. Each item write locks the month's row first, so it needs no advisory
   lock, and `POST /periods` refuses templates that would add up past the bound.
 
+## Overdue list
+
+- `GET /overdue-items` lists every `overdue` fixed, occasional and income item of a closed month, whatever month is being
+  looked at, oldest month first, then by due date. Pending items of open months and card charges never appear (D3, D7).
+- `expenseTotal` and `incomeTotal` sum the whole list. They count toward no month's `toPay` or `toReceive`. Each month's sums
+  stay within `kernel.MaxMoney`, but nothing bounds the months together, so these two stop at that bound rather than fail.
+- The list has no writes of its own: the item's done endpoints settle it. It stays in its original month and leaves the
+  list; undo returns it. A person-linked item records its payment as described below.
+
 ## Platform behavior worth knowing
 
 - A share is ⌈cost ÷ members⌉ in whole pesos (D10). An owner who is a member counts in the divisor, owes 0, gets no income

@@ -252,6 +252,69 @@ func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListIt
 	return items, nil
 }
 
+const listOverdueItems = `-- name: ListOverdueItems :many
+SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
+  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+FROM period_items AS i
+JOIN periods AS p ON p.id = i.period_id
+WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind <> 'card_charge'
+ORDER BY p.year, p.month, i.due_date NULLS LAST, i.name, i.id
+`
+
+type ListOverdueItemsRow struct {
+	ID         pgtype.UUID
+	Year       int32
+	Month      int32
+	TemplateID pgtype.UUID
+	PersonID   pgtype.UUID
+	Kind       string
+	Name       string
+	Amount     int64
+	DueDate    pgtype.Date
+	CardID     pgtype.UUID
+	TagID      pgtype.UUID
+	Status     string
+	DoneAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListOverdueItems(ctx context.Context) ([]ListOverdueItemsRow, error) {
+	rows, err := q.db.Query(ctx, listOverdueItems)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOverdueItemsRow
+	for rows.Next() {
+		var i ListOverdueItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Year,
+			&i.Month,
+			&i.TemplateID,
+			&i.PersonID,
+			&i.Kind,
+			&i.Name,
+			&i.Amount,
+			&i.DueDate,
+			&i.CardID,
+			&i.TagID,
+			&i.Status,
+			&i.DoneAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockPeriod = `-- name: LockPeriod :one
 SELECT id, year, month, status
 FROM periods
