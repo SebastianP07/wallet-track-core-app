@@ -15,6 +15,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	accountshttp "github.com/SebastianP07/wallet-track-core-app/internal/accounts/adapters/http"
+	accountspostgres "github.com/SebastianP07/wallet-track-core-app/internal/accounts/adapters/postgres"
+	accountsapplication "github.com/SebastianP07/wallet-track-core-app/internal/accounts/application"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/crypto"
 	authhttp "github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/http"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/memory"
@@ -80,7 +83,7 @@ func run() error {
 	}
 
 	router := platform.Chain(
-		platform.NewRouter(authHandler.Register),
+		platform.NewRouter(authHandler.Register, newAccountsHandler(pool, authHandler, logger).Register),
 		platform.RequestID,
 		platform.LogRequests(logger),
 		platform.SecurityHeaders,
@@ -154,6 +157,23 @@ func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platf
 		ClientIP: platform.NewClientIPResolver(edgeCfg.TrustedProxies),
 		Logger:   logger,
 	}), nil
+}
+
+func newAccountsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *accountshttp.Handler {
+	repo := accountspostgres.NewRepository(pool)
+	tx := accountspostgres.NewTxManager(pool)
+	return accountshttp.NewHandler(accountshttp.Config{
+		UseCases: accountshttp.UseCases{
+			List:   accountsapplication.NewListAccounts(repo),
+			Get:    accountsapplication.NewGetAccount(repo),
+			Create: accountsapplication.NewCreateAccount(tx),
+			Update: accountsapplication.NewUpdateAccount(tx),
+			Delete: accountsapplication.NewDeleteAccount(tx),
+		},
+		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
+		Logger:         logger,
+	})
 }
 
 var _ http.Handler = http.NewServeMux()

@@ -5,17 +5,50 @@ package kernel
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 )
 
-// ErrInvalidMoney is wrapped by every error ParseMoney returns.
-var ErrInvalidMoney = errors.New("invalid money")
+var (
+	// ErrInvalidMoney is wrapped by every error ParseMoney returns.
+	ErrInvalidMoney = errors.New("invalid money")
+	// ErrMoneyOutOfRange means an amount or a sum lies beyond MaxMoney in either direction.
+	ErrMoneyOutOfRange = errors.New("money out of range")
+)
 
 // Money is an amount of whole Colombian pesos.
 type Money int64
 
+// MaxMoney is 2^53-1, the largest integer a JSON number carries safely in a browser. The contract
+// bounds every amount to it, in both directions.
+const MaxMoney Money = 1<<53 - 1
+
 const moneyGroupSize = 3
+
+// NewMoney rejects amounts beyond MaxMoney in either direction.
+func NewMoney(value int64) (Money, error) {
+	if value > int64(MaxMoney) || value < -int64(MaxMoney) {
+		return 0, fmt.Errorf("%w: %d", ErrMoneyOutOfRange, value)
+	}
+	return Money(value), nil
+}
+
+// SumMoney is exact at any length and in any order: only the final sum has to fit, so a large
+// credit and a large debit may cancel out.
+func SumMoney(amounts []Money) (Money, error) {
+	sum := new(big.Int)
+	for _, amount := range amounts {
+		if _, err := NewMoney(int64(amount)); err != nil {
+			return 0, err
+		}
+		sum.Add(sum, big.NewInt(int64(amount)))
+	}
+	if !sum.IsInt64() {
+		return 0, fmt.Errorf("%w: sum %s", ErrMoneyOutOfRange, sum)
+	}
+	return NewMoney(sum.Int64())
+}
 
 // ParseMoney reads whole pesos with an optional leading minus and optional comma
 // thousands separators: "1234", "1,234" and "-1,234,567". Separators must be
@@ -37,7 +70,11 @@ func ParseMoney(s string) (Money, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%w: %q: %w", ErrInvalidMoney, s, err)
 	}
-	return Money(value), nil
+	money, err := NewMoney(value)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %q: %w", ErrInvalidMoney, s, err)
+	}
+	return money, nil
 }
 
 func stripThousandsSeparators(digits string) (string, error) {

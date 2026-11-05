@@ -137,7 +137,8 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `contracts` | `openapi.yaml`, the HTTP contract |
 | `migrations` | goose SQL migrations |
 | `queries/<module>` | sqlc SQL; each module gets a block in `sqlc.yaml` and generates into `internal/<module>/adapters/postgres/sqlcgen` |
-| `internal/shared/kernel` | Shared value objects: `Money` |
+| `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1) |
+| `internal/accounts` | Accounts and savings: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
 | `internal/shared/platform` | Config, logging, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |

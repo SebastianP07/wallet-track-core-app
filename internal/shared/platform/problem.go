@@ -2,10 +2,13 @@ package platform
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 )
+
+const maxJSONBodyBytes = 16 << 10
 
 // FieldError names one rejected value of a 400.
 type FieldError struct {
@@ -39,6 +42,19 @@ func WriteTooManyRequests(w http.ResponseWriter, retryAfter time.Duration) {
 	seconds := int64((retryAfter + time.Second - 1) / time.Second)
 	w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	WriteProblem(w, http.StatusTooManyRequests, "Too many attempts. Try again later.")
+}
+
+// DecodeJSON reads one JSON document of at most maxJSONBodyBytes, refusing unknown fields.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if decoder.More() {
+		return errors.New("trailing data after the JSON body")
+	}
+	return nil
 }
 
 func WriteJSON(w http.ResponseWriter, status int, body any) {

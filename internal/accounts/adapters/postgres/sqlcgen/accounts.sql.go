@@ -7,12 +7,70 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const createAccount = `-- name: CreateAccount :one
+INSERT INTO accounts (name, kind, balance)
+VALUES ($1, $2, $3)
+RETURNING id, name, kind, balance, created_at, updated_at
+`
+
+type CreateAccountParams struct {
+	Name    string
+	Kind    string
+	Balance int64
+}
+
+func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error) {
+	row := q.db.QueryRow(ctx, createAccount, arg.Name, arg.Kind, arg.Balance)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Kind,
+		&i.Balance,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteAccount = `-- name: DeleteAccount :exec
+DELETE FROM accounts
+WHERE id = $1
+`
+
+func (q *Queries) DeleteAccount(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteAccount, id)
+	return err
+}
+
+const getAccount = `-- name: GetAccount :one
+SELECT id, name, kind, balance, created_at, updated_at
+FROM accounts
+WHERE id = $1
+`
+
+func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccount, id)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Kind,
+		&i.Balance,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const listAccounts = `-- name: ListAccounts :many
 SELECT id, name, kind, balance, created_at, updated_at
 FROM accounts
-ORDER BY name
+ORDER BY name, id
 `
 
 func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
@@ -40,4 +98,46 @@ func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAccountWrites = `-- name: LockAccountWrites :exec
+SELECT pg_advisory_xact_lock(4301)
+`
+
+func (q *Queries) LockAccountWrites(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockAccountWrites)
+	return err
+}
+
+const updateAccount = `-- name: UpdateAccount :one
+UPDATE accounts
+SET name = $2, kind = $3, balance = $4
+WHERE id = $1
+RETURNING id, name, kind, balance, created_at, updated_at
+`
+
+type UpdateAccountParams struct {
+	ID      pgtype.UUID
+	Name    string
+	Kind    string
+	Balance int64
+}
+
+func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error) {
+	row := q.db.QueryRow(ctx, updateAccount,
+		arg.ID,
+		arg.Name,
+		arg.Kind,
+		arg.Balance,
+	)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Kind,
+		&i.Balance,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

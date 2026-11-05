@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-11-04 — Accounts and savings
+
+- Added `internal/accounts`: list, get, create, edit (name, kind, balance) and hard delete under `/api/v1/accounts`,
+  as the contract says. Every operation needs a full session; mutations also need CSRF.
+- The list returns `currentTotal` (non-savings balances) and `savingsTotal` (savings balances), computed in the domain.
+- Added `kernel.MaxMoney` (2^53-1), `NewMoney` and an exact `SumMoney`; `ParseMoney` now enforces the bound. A balance
+  beyond it is a 400 on the field. Decimals, exponents and quoted numbers are a 400 too.
+- A create, edit or delete that would take a total beyond the bound is a 400, checked under an advisory lock so
+  concurrent writes cannot pass it together. If a total is still out of bound, from a direct database edit,
+  `GET /accounts` answers 500 and logs it rather than send a number the contract cannot carry.
+- Names are trimmed and refuse control characters, which also keeps NUL away from PostgreSQL.
+- Moved the auth adapter's JSON body decoding to `platform.DecodeJSON`, with no change in behavior, so modules share it.
+- `ListAccounts` now breaks name ties by id, so the order is stable. No contract change. No new automated tests (T7).
+
 ## 0.3.0 — 2026-11-04 — Auth backend
 
 - Added `internal/auth`: password login, TOTP second factor, MFA enrollment gated by a one-time secret, recovery

@@ -65,7 +65,7 @@ func toUserResponse(user domain.User) userResponse {
 
 func (h *Handler) loginWithPassword(w http.ResponseWriter, r *http.Request) {
 	var body passwordLoginRequest
-	if err := decodeBody(w, r, &body); err != nil {
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
 		writeBadRequest(w)
 		return
 	}
@@ -91,7 +91,7 @@ func (h *Handler) loginWithPassword(w http.ResponseWriter, r *http.Request) {
 // decodeTOTPCode answers the 400 itself and reports whether the handler may go on.
 func decodeTOTPCode(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body totpCodeRequest
-	if err := decodeBody(w, r, &body); err != nil {
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
 		writeBadRequest(w)
 		return "", false
 	}
@@ -119,7 +119,7 @@ func (h *Handler) loginWithTOTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) loginWithRecoveryCode(w http.ResponseWriter, r *http.Request) {
 	var body recoveryCodeRequest
-	if err := decodeBody(w, r, &body); err != nil {
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
 		writeBadRequest(w)
 		return
 	}
@@ -143,7 +143,7 @@ func (h *Handler) loginWithRecoveryCode(w http.ResponseWriter, r *http.Request) 
 func (h *Handler) startMFAEnrollment(w http.ResponseWriter, r *http.Request) {
 	// The contract answers a malformed or missing secret like a wrong one, never with a 400.
 	var body enrollmentStartRequest
-	if err := decodeBody(w, r, &body); err != nil {
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
 		body = enrollmentStartRequest{}
 	}
 	if !h.allowPrincipal(w, r) {

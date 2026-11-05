@@ -3,7 +3,6 @@ package http
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -18,7 +17,6 @@ import (
 const (
 	basePath      = "/api/v1"
 	sessionCookie = "session"
-	maxBodyBytes  = 16 << 10
 
 	genericUnauthorized = "Authentication failed."
 )
@@ -166,18 +164,6 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		)
 		platform.WriteProblem(w, http.StatusInternalServerError, "Something went wrong.")
 	}
-}
-
-func decodeBody(w http.ResponseWriter, r *http.Request, target any) error {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if decoder.More() {
-		return errors.New("trailing data after the JSON body")
-	}
-	return nil
 }
 
 func writeBadRequest(w http.ResponseWriter, fields ...platform.FieldError) {
