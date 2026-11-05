@@ -68,6 +68,9 @@ func (u *OpenPeriod) Execute(ctx context.Context, month kernel.YearMonth) (Opene
 		if err != nil {
 			return fmt.Errorf("list active templates: %w", err)
 		}
+		if err := domain.CheckClonedTotals(templates); err != nil {
+			return err
+		}
 		for _, template := range templates {
 			if err := repo.AddItem(ctx, domain.ItemFrom(template, period)); err != nil {
 				return fmt.Errorf("clone template: %w", err)

@@ -26,10 +26,16 @@ import (
 	cardshttp "github.com/SebastianP07/wallet-track-core-app/internal/cards/adapters/http"
 	cardspostgres "github.com/SebastianP07/wallet-track-core-app/internal/cards/adapters/postgres"
 	cardsapplication "github.com/SebastianP07/wallet-track-core-app/internal/cards/application"
+	expenseshttp "github.com/SebastianP07/wallet-track-core-app/internal/expenses/adapters/http"
+	expensespostgres "github.com/SebastianP07/wallet-track-core-app/internal/expenses/adapters/postgres"
+	expensesapplication "github.com/SebastianP07/wallet-track-core-app/internal/expenses/application"
 	periodshttp "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/http"
 	periodspostgres "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/postgres"
 	periodsapplication "github.com/SebastianP07/wallet-track-core-app/internal/periods/application"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/platform"
+	tagshttp "github.com/SebastianP07/wallet-track-core-app/internal/tags/adapters/http"
+	tagspostgres "github.com/SebastianP07/wallet-track-core-app/internal/tags/adapters/postgres"
+	tagsapplication "github.com/SebastianP07/wallet-track-core-app/internal/tags/application"
 )
 
 const (
@@ -94,6 +100,8 @@ func run() error {
 			newAccountsHandler(pool, authHandler, logger).Register,
 			newPeriodsHandler(pool, authHandler, logger).Register,
 			newCardsHandler(pool, authHandler, logger).Register,
+			newExpensesHandler(pool, authHandler, logger).Register,
+			newTagsHandler(pool, authHandler, logger).Register,
 		),
 		platform.RequestID,
 		platform.LogRequests(logger),
@@ -212,6 +220,41 @@ func newCardsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Lo
 	return cardshttp.NewHandler(cardshttp.Config{
 		List:           cardsapplication.NewListCards(cardspostgres.NewRepository(pool)),
 		RequireSession: auth.RequireFullSession,
+		Logger:         logger,
+	})
+}
+
+func newExpensesHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *expenseshttp.Handler {
+	repo := expensespostgres.NewRepository(pool)
+	tx := expensespostgres.NewTxManager(pool)
+	clock := platform.SystemClock{}
+	return expenseshttp.NewHandler(expenseshttp.Config{
+		UseCases: expenseshttp.UseCases{
+			List:   expensesapplication.NewListItems(repo, clock),
+			Get:    expensesapplication.NewGetItem(repo, clock),
+			Create: expensesapplication.NewCreateItem(tx, clock),
+			Update: expensesapplication.NewUpdateItem(tx, clock),
+			Delete: expensesapplication.NewDeleteItem(tx),
+			Done:   expensesapplication.NewMarkItemDone(tx, clock),
+			Undone: expensesapplication.NewUnmarkItemDone(tx, clock),
+		},
+		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
+		Logger:         logger,
+	})
+}
+
+func newTagsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *tagshttp.Handler {
+	repo := tagspostgres.NewRepository(pool)
+	return tagshttp.NewHandler(tagshttp.Config{
+		UseCases: tagshttp.UseCases{
+			List:   tagsapplication.NewListTags(repo),
+			Create: tagsapplication.NewCreateTag(repo),
+			Update: tagsapplication.NewUpdateTag(repo),
+			Delete: tagsapplication.NewDeleteTag(repo),
+		},
+		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
 		Logger:         logger,
 	})
 }

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.0 — 2026-11-04 — Expenses and tags
+
+- Added `internal/expenses`: list a month's items, add, get, edit and delete, and the done toggle, under `/api/v1`, as the
+  contract says. Every operation needs a full session; mutations also need CSRF. `GET /overdue-items` waits for Phase 10.
+- Writes accept kinds `fixed` and `occasional` only. Income and card charge rows can be read and are totaled, but
+  creating, editing, deleting or toggling one is a 400 on `kind` until Phases 7 and 8.
+- `urgency` comes from a pure `domain.UrgencyOf` (D11), with today from a Clock port through `kernel.DateInBogota`.
+- `totals.toPay` is Por pagar (D1): pending fixed + occasional, without done, overdue or card charge items. Filters narrow
+  `items` only, so tags never touch totals (D5).
+- Done is idempotent and keeps the first `doneAt`. Undo returns an item to `pending`, or to `overdue` in a closed month
+  (D7). In a closed month, adding is a 409; toggling, editing and deleting are allowed, as the contract has no 409 for them.
+- A create or edit that would take a month's total past `kernel.MaxMoney` is a 400 on `amount`. Every item write locks
+  the month's row first, which serializes the check and any close without an advisory lock. If a total is still out of
+  bound, from a direct database edit, the list answers 500 and logs it.
+- `POST /periods` is a 400 when the active templates of one kind add up past the bound, because that month's list could
+  otherwise never answer.
+- Added `internal/tags`: list, create, edit and delete. A bad hex color is a 400 and a taken name is a 409.
+- `dueDate` must be a real date from 2000-01-01 on, the same floor as `YearMonth`.
+- Added `kernel.DateInBogota` and `platform.SystemClock`.
+- Contract: `PeriodItemTotals` gained a required `toPay`. No migrations. No new automated tests (T7).
+
 ## 0.7.0 — 2026-11-04 — Periods and templates
 
 - Added `internal/periods`: list, get, open and close periods, and list, get, create, edit and delete recurring

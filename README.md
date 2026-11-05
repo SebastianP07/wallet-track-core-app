@@ -87,6 +87,18 @@ Other operator commands:
   opened, not one already open. Opening a month that exists answers 200 and changes nothing, even if it is closed.
 - Closing a month that has no period is a 404. Closing a closed month is a 200 that changes nothing. There is no reopen.
 
+## Expense item behavior worth knowing
+
+- Writes accept kinds `fixed` and `occasional` only for now. Income and card charge rows can be read and are totaled, but
+  changing one through these endpoints is a 400 on `kind` until Phases 7 and 8.
+- In a closed month, adding an item is a 409. Toggling, editing and deleting are allowed. Undo returns an item to
+  `overdue` there, and to `pending` in an open month.
+- `dueDate` is any real date from 2000-01-01 on. It need not fall inside the item's month.
+- Urgency is by calendar days left in `America/Bogota`. An overdue item still gets one; only a done item or one with no
+  due date is always `none`.
+- A month's totals stay within `kernel.MaxMoney`. Each item write locks the month's row first, so it needs no advisory
+  lock, and `POST /periods` refuses templates that would add up past the bound.
+
 ## Commands
 
 | Command | What it does |
@@ -145,12 +157,14 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `contracts` | `openapi.yaml`, the HTTP contract |
 | `migrations` | goose SQL migrations |
 | `queries/<module>` | sqlc SQL; each module gets a block in `sqlc.yaml` and generates into `internal/<module>/adapters/postgres/sqlcgen` |
-| `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1), and `YearMonth`, from 2000-01 on, with the due day clamp (D11) |
+| `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1), `YearMonth`, from 2000-01 on, with the due day clamp (D11), and `DateInBogota` |
 | `internal/accounts` | Accounts and savings: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
 | `internal/periods` | Periods and recurring templates: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
+| `internal/expenses` | A month's items and their done toggle, with urgency (D11) and Por pagar (D1): `domain`, `application` and `adapters/{http,postgres}` |
+| `internal/tags` | Tags (D5): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/cards` | Credit cards, so far only the list that card selection needs; Phase 8 adds the rest |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
-| `internal/shared/platform` | Config, logging, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
+| `internal/shared/platform` | Config, logging, the system clock, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |
 | `infra` | Local Postgres compose file |
 

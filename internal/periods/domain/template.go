@@ -188,6 +188,21 @@ func (c TemplateChanges) ApplyTo(template Template) (Template, error) {
 	return template, nil
 }
 
+// CheckClonedTotals keeps a month from opening with a total the contract cannot carry: every list of
+// that month would answer 500, with no way to reach its items and fix them.
+func CheckClonedTotals(templates []Template) error {
+	amounts := make(map[TemplateKind][]kernel.Money)
+	for _, template := range templates {
+		amounts[template.Kind] = append(amounts[template.Kind], template.Amount)
+	}
+	for _, kindAmounts := range amounts {
+		if _, err := kernel.SumMoney(kindAmounts); err != nil {
+			return &ValidationError{Violations: []Violation{{Field: "period", Message: "active templates add up to more than 9007199254740991"}}}
+		}
+	}
+	return nil
+}
+
 func checkKindOwnsFields(kind TemplateKind, dueDay *int, cardID *string, violations []Violation) []Violation {
 	if dueDay != nil && kind != TemplateFixed {
 		violations = append(violations, Violation{Field: "dueDay", Message: dueDayOnlyOnFixedMessage})

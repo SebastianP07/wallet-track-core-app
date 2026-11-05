@@ -2119,7 +2119,13 @@ components:
       - occasional
       - income
       - cardCharge
+      - toPay
       properties:
+        toPay:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Por pagar: pending fixed + occasional items of the month (D1). Excludes card charges
+            (D3) and overdue items (D7).'
         fixed:
           $ref: '#/components/schemas/ItemKindTotal'
         occasional:
