@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-11-04 — Periods and templates
+
+- Added `internal/periods`: list, get, open and close periods, and list, get, create, edit and delete recurring
+  templates under `/api/v1`, as the contract says. Every operation needs a full session; mutations also need CSRF.
+- Opening clones the active templates only when it creates the month, in one transaction. A retry answers 200 and
+  changes nothing; concurrent opens wait on the period's unique key, and `period_items_period_template_key` backs it.
+- Closing marks pending fixed, occasional and income items `overdue`, leaves card charges pending (D3, D7), and
+  changes nothing on a month already closed.
+- Added `kernel.YearMonth`, whose `DateOn` clamps a due day to the month's last day (D11). Only fixed items get a due
+  date, as the contract says.
+- Refused template writes answer 400 on the field: the domain checks the kind's rules first, and the repository maps
+  the `recurring_templates` CHECK and foreign key violations, so a card deleted meanwhile is a 400 too.
+- Added `internal/cards` with only `GET /credit-cards`, ahead of Phase 8, because the web app's card selection needs it.
+- Contract: `YearMonth` starts at 2000-01, which the `periods` table already required, and `updateRecurringTemplate`
+  documents the 400 for a `dueDay` or `cardId` that does not fit the kind. No new automated tests (T7).
+
 ## 0.6.0 — 2026-11-04 — Accounts and savings
 
 - Added `internal/accounts`: list, get, create, edit (name, kind, balance) and hard delete under `/api/v1/accounts`,

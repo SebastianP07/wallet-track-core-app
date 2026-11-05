@@ -79,6 +79,14 @@ Other operator commands:
 | Client IP | The TCP peer by default, ignoring `X-Forwarded-For`. Behind the BFF that makes the per-IP limit one shared bucket, so set `TRUSTED_PROXIES` to the BFF's address, locally too. A listed peer's header is read from the right, and the first untrusted address is the client. Limits and password lockout key an IPv6 client by its /64 and an IPv4-mapped address as IPv4 |
 | `Origin` | A mutating request carrying an `Origin` not in `ALLOWED_ORIGINS` gets a 403, so an empty list rejects them all. No `Origin` leaves the decision to the CSRF token |
 
+## Period behavior worth knowing
+
+- Months are independent. Any month from 2000-01 on can be opened or closed in any order, several can be open at
+  once, and nothing opens or closes a month on its own.
+- Opening clones the active templates only when it creates the month, so a template added later reaches the next month
+  opened, not one already open. Opening a month that exists answers 200 and changes nothing, even if it is closed.
+- Closing a month that has no period is a 404. Closing a closed month is a 200 that changes nothing. There is no reopen.
+
 ## Commands
 
 | Command | What it does |
@@ -137,8 +145,10 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `contracts` | `openapi.yaml`, the HTTP contract |
 | `migrations` | goose SQL migrations |
 | `queries/<module>` | sqlc SQL; each module gets a block in `sqlc.yaml` and generates into `internal/<module>/adapters/postgres/sqlcgen` |
-| `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1) |
+| `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1), and `YearMonth`, from 2000-01 on, with the due day clamp (D11) |
 | `internal/accounts` | Accounts and savings: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
+| `internal/periods` | Periods and recurring templates: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
+| `internal/cards` | Credit cards, so far only the list that card selection needs; Phase 8 adds the rest |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
 | `internal/shared/platform` | Config, logging, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |

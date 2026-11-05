@@ -826,7 +826,8 @@ paths:
       tags:
       - Recurring templates
       description: Affects future months only. An active `card_charge` template must have a card, so
-        removing its card or reactivating one without a card returns 400.
+        removing its card or reactivating one without a card returns 400. As on create, `dueDay` is only
+        for `fixed` templates and `cardId` only for `card_charge` ones; anything else returns 400.
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -1630,8 +1631,8 @@ components:
       - 64700
     YearMonth:
       type: string
-      pattern: ^[0-9]{4}-(0[1-9]|1[0-2])$
-      description: A month, as YYYY-MM.
+      pattern: ^[2-9][0-9]{3}-(0[1-9]|1[0-2])$
+      description: A month, as YYYY-MM, from 2000-01 on.
       examples:
       - 2026-11
     Id:

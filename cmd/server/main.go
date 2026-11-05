@@ -23,6 +23,12 @@ import (
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/memory"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/postgres"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/application"
+	cardshttp "github.com/SebastianP07/wallet-track-core-app/internal/cards/adapters/http"
+	cardspostgres "github.com/SebastianP07/wallet-track-core-app/internal/cards/adapters/postgres"
+	cardsapplication "github.com/SebastianP07/wallet-track-core-app/internal/cards/application"
+	periodshttp "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/http"
+	periodspostgres "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/postgres"
+	periodsapplication "github.com/SebastianP07/wallet-track-core-app/internal/periods/application"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/platform"
 )
 
@@ -83,7 +89,12 @@ func run() error {
 	}
 
 	router := platform.Chain(
-		platform.NewRouter(authHandler.Register, newAccountsHandler(pool, authHandler, logger).Register),
+		platform.NewRouter(
+			authHandler.Register,
+			newAccountsHandler(pool, authHandler, logger).Register,
+			newPeriodsHandler(pool, authHandler, logger).Register,
+			newCardsHandler(pool, authHandler, logger).Register,
+		),
 		platform.RequestID,
 		platform.LogRequests(logger),
 		platform.SecurityHeaders,
@@ -172,6 +183,35 @@ func newAccountsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 		},
 		RequireSession: auth.RequireFullSession,
 		RequireCSRF:    auth.CSRF.Protect,
+		Logger:         logger,
+	})
+}
+
+func newPeriodsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *periodshttp.Handler {
+	repo := periodspostgres.NewRepository(pool)
+	tx := periodspostgres.NewTxManager(pool)
+	return periodshttp.NewHandler(periodshttp.Config{
+		UseCases: periodshttp.UseCases{
+			ListPeriods:    periodsapplication.NewListPeriods(repo),
+			GetPeriod:      periodsapplication.NewGetPeriod(repo),
+			OpenPeriod:     periodsapplication.NewOpenPeriod(tx),
+			ClosePeriod:    periodsapplication.NewClosePeriod(tx),
+			ListTemplates:  periodsapplication.NewListTemplates(repo),
+			GetTemplate:    periodsapplication.NewGetTemplate(repo),
+			CreateTemplate: periodsapplication.NewCreateTemplate(repo),
+			UpdateTemplate: periodsapplication.NewUpdateTemplate(tx),
+			DeleteTemplate: periodsapplication.NewDeleteTemplate(repo),
+		},
+		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
+		Logger:         logger,
+	})
+}
+
+func newCardsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *cardshttp.Handler {
+	return cardshttp.NewHandler(cardshttp.Config{
+		List:           cardsapplication.NewListCards(cardspostgres.NewRepository(pool)),
+		RequireSession: auth.RequireFullSession,
 		Logger:         logger,
 	})
 }
