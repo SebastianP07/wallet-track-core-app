@@ -1,5 +1,6 @@
-// Package domain holds the rules of a month's expense items: urgency (D11), Por pagar (D1) and the
-// done toggle (D7). Income and card charge rows are read and totaled, but Phases 7 and 8 own writing them.
+// Package domain holds the rules of a month's expense and income items: urgency (D11), Por pagar and
+// Por llegar (D1) and the done toggle (D7). Card charge rows are read and totaled, but Phase 8 owns
+// writing them.
 package domain
 
 import (
@@ -21,10 +22,11 @@ const (
 // AmountOutOfRangeMessage is the one wording of the bound, also for values too large to reach the domain.
 const AmountOutOfRangeMessage = "must be whole pesos between 0 and 9007199254740991"
 
-// DueDateMessage is the one wording of a rejected date.
-const DueDateMessage = "must be a date as YYYY-MM-DD, from 2000-01-01 on"
+const dueDateMessage = "must be a date as YYYY-MM-DD, from 2000-01-01 on"
 
 const totalOutOfRangeMessage = "would take this month's total beyond 9007199254740991"
+
+var incomeDueDateViolation = Violation{Field: "dueDate", Message: "income items have no due date"}
 
 var (
 	ErrPeriodNotFound = errors.New("period not found")
@@ -125,12 +127,12 @@ type Item struct {
 	UpdatedAt  time.Time
 }
 
-// RequireExpense keeps income and card charge rows out of reach until their phases.
-func (i Item) RequireExpense() error {
-	if isExpense(i.Kind) {
+// RequireWritable keeps card charge rows out of reach until Phase 8.
+func (i Item) RequireWritable() error {
+	if i.Kind != ItemCardCharge {
 		return nil
 	}
-	return &ValidationError{Violations: []Violation{{Field: "kind", Message: "only fixed and occasional items can be changed here"}}}
+	return &ValidationError{Violations: []Violation{{Field: "kind", Message: "only fixed, occasional and income items can be changed here"}}}
 }
 
 // Done is idempotent: an item already done keeps the moment it was first done. Never touches a
@@ -183,32 +185,38 @@ type NewItemInput struct {
 	Kind    string
 	Name    string
 	Amount  int64
-	DueDate string
+	DueDate *string
 	TagID   *string
 }
 
-// NewItem is a valid pending expense that has not been stored yet.
+// NewItem is a valid pending item that has not been stored yet. Income has no DueDate.
 type NewItem struct {
 	Kind    ItemKind
 	Name    string
 	Amount  kernel.Money
-	DueDate time.Time
+	DueDate *time.Time
 	TagID   *string
 }
 
-// CreateNewItem validates a new item. Only expenses are accepted until Phases 7 and 8.
+// CreateNewItem validates a new item. Card charges are refused until Phase 8.
 func CreateNewItem(input NewItemInput) (NewItem, error) {
 	var violations []Violation
 	item := NewItem{TagID: input.TagID}
 	kind := ItemKind(input.Kind)
-	if isExpense(kind) {
+	switch {
+	case isExpense(kind):
 		item.Kind = kind
-	} else {
-		violations = append(violations, Violation{Field: "kind", Message: "must be fixed or occasional"})
+		item.DueDate, violations = checkRequiredDueDate(input.DueDate, violations)
+	case kind == ItemIncome:
+		item.Kind = kind
+		if input.DueDate != nil {
+			violations = append(violations, incomeDueDateViolation)
+		}
+	default:
+		violations = append(violations, Violation{Field: "kind", Message: "must be fixed, occasional or income"})
 	}
 	item.Name, violations = checkName(input.Name, violations)
 	item.Amount, violations = checkAmount(input.Amount, violations)
-	item.DueDate, violations = checkDueDate(input.DueDate, violations)
 	if len(violations) > 0 {
 		return NewItem{}, &ValidationError{Violations: violations}
 	}
@@ -269,6 +277,9 @@ func (c ItemChanges) ApplyTo(item Item) (Item, error) {
 	if c.cardID.Value != nil {
 		return Item{}, &ValidationError{Violations: []Violation{{Field: "cardId", Message: "only card charge items have a card"}}}
 	}
+	if c.dueDate != nil && item.Kind == ItemIncome {
+		return Item{}, &ValidationError{Violations: []Violation{incomeDueDateViolation}}
+	}
 	if c.name != nil {
 		item.Name = *c.name
 	}
@@ -305,10 +316,18 @@ func checkAmount(raw int64, violations []Violation) (kernel.Money, []Violation) 
 	return amount, violations
 }
 
+func checkRequiredDueDate(raw *string, violations []Violation) (*time.Time, []Violation) {
+	if raw == nil {
+		return nil, append(violations, Violation{Field: "dueDate", Message: "is required"})
+	}
+	date, violations := checkDueDate(*raw, violations)
+	return &date, violations
+}
+
 func checkDueDate(raw string, violations []Violation) (time.Time, []Violation) {
 	date, err := time.Parse(dateLayout, raw)
 	if err != nil || date.Year() < firstDueYear {
-		return time.Time{}, append(violations, Violation{Field: "dueDate", Message: DueDateMessage})
+		return time.Time{}, append(violations, Violation{Field: "dueDate", Message: dueDateMessage})
 	}
 	return date, violations
 }

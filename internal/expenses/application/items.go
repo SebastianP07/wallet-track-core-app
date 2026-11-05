@@ -138,7 +138,7 @@ func (u *UpdateItem) Execute(ctx context.Context, id string, changes domain.Item
 		if index < 0 {
 			return domain.ErrItemNotFound
 		}
-		if err := items[index].RequireExpense(); err != nil {
+		if err := items[index].RequireWritable(); err != nil {
 			return err
 		}
 		changed, err := changes.ApplyTo(items[index])
@@ -175,7 +175,7 @@ func (u *DeleteItem) Execute(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		if err := item.RequireExpense(); err != nil {
+		if err := item.RequireWritable(); err != nil {
 			return err
 		}
 		found, err := repo.DeleteItem(ctx, id)
@@ -236,7 +236,7 @@ func changeStatus(
 		if err != nil {
 			return err
 		}
-		if err := item.RequireExpense(); err != nil {
+		if err := item.RequireWritable(); err != nil {
 			return err
 		}
 		result = change(item, period)

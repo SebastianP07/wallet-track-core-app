@@ -121,7 +121,7 @@ func (r *Repository) CreateItem(ctx context.Context, periodID string, item domai
 		Kind:     string(item.Kind),
 		Name:     item.Name,
 		Amount:   int64(item.Amount),
-		DueDate:  pgtype.Date{Time: item.DueDate, Valid: true},
+		DueDate:  toDate(item.DueDate),
 		TagID:    tagID,
 	})
 	if err != nil {

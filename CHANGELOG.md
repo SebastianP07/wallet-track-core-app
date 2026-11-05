@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0 — 2026-11-04 — Income
+
+- Income items can be added, edited, deleted and toggled through the existing item endpoints, by extending
+  `internal/expenses`: the contract has one set of routes for every kind, and income shares its table, month lock, total
+  check and toggle. Card charge rows stay a 400 on `kind` until Phase 8.
+- `totals.toReceive` is Por llegar (D1): pending income, without received or overdue items. Filters narrow `items` only,
+  so tags never touch it (D5).
+- Income has no due date and no urgency. `dueDate` is a 400 on it, whether sent to create or to edit. `personId` cannot be
+  set here; Phase 9 owns those rows (D4).
+- `domain.Item.RequireExpense` became `RequireWritable`. A missing or malformed `dueDate` on an expense is still a 400 on
+  that field, now reported by the domain, which is the one place that knows the rule for each kind.
+- Contract: `PeriodItemTotals` gained a required `toReceive`, and `PeriodItemUpdate` documents the income rule. No
+  migrations. No new automated tests (T7).
+
 ## 0.8.0 — 2026-11-04 — Expenses and tags
 
 - Added `internal/expenses`: list a month's items, add, get, edit and delete, and the done toggle, under `/api/v1`, as the

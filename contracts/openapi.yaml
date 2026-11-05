@@ -2079,7 +2079,8 @@ components:
           card_charge: '#/components/schemas/CardChargeItemCreate'
     PeriodItemUpdate:
       type: object
-      description: '`kind` and `status` cannot be edited; the done endpoints change `status`.'
+      description: '`kind` and `status` cannot be edited; the done endpoints change `status`. `dueDate`
+        is refused on income items, which have none.'
       properties:
         name:
           $ref: '#/components/schemas/Name'
@@ -2120,12 +2121,18 @@ components:
       - income
       - cardCharge
       - toPay
+      - toReceive
       properties:
         toPay:
           allOf:
           - $ref: '#/components/schemas/NonNegativeMoney'
           description: 'Por pagar: pending fixed + occasional items of the month (D1). Excludes card charges
             (D3) and overdue items (D7).'
+        toReceive:
+          allOf:
+          - $ref: '#/components/schemas/NonNegativeMoney'
+          description: 'Por llegar: pending income items of the month (D1). Excludes received and overdue
+            items (D7).'
         fixed:
           $ref: '#/components/schemas/ItemKindTotal'
         occasional:

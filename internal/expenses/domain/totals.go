@@ -21,6 +21,8 @@ type Totals struct {
 	// ToPay is Por pagar: pending fixed + occasional. Done, overdue (D7) and card charge (D3) items
 	// are out of it.
 	ToPay kernel.Money
+	// ToReceive is Por llegar: pending income. Received and overdue (D7) items are out of it.
+	ToReceive kernel.Money
 }
 
 // ComputeTotals returns ErrTotalOutOfRange rather than a number the contract cannot carry. It checks
@@ -47,6 +49,7 @@ func ComputeTotals(items []Item) (Totals, error) {
 	if err != nil {
 		return Totals{}, errors.Join(ErrTotalOutOfRange, err)
 	}
+	totals.ToReceive = totals.Income.Pending
 	return totals, nil
 }
 

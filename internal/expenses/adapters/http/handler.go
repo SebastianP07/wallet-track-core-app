@@ -1,4 +1,5 @@
-// Package http is the inbound HTTP adapter of the expenses module: a month's items and their done toggle.
+// Package http is the inbound HTTP adapter of the expenses module: a month's items, income included,
+// and their done toggle.
 package http
 
 import (
@@ -103,6 +104,7 @@ type totalsResponse struct {
 	Income     kindTotalResponse `json:"income"`
 	CardCharge kindTotalResponse `json:"cardCharge"`
 	ToPay      int64             `json:"toPay"`
+	ToReceive  int64             `json:"toReceive"`
 }
 
 type itemListResponse struct {
@@ -176,6 +178,7 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 			Income:     toKindTotal(list.Totals.Income),
 			CardCharge: toKindTotal(list.Totals.CardCharge),
 			ToPay:      int64(list.Totals.ToPay),
+			ToReceive:  int64(list.Totals.ToReceive),
 		},
 	})
 }
@@ -241,7 +244,7 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 	input := domain.NewItemInput{
 		Kind:    requiredString(body.Kind, "kind", &fields),
 		Name:    requiredString(body.Name, "name", &fields),
-		DueDate: requiredDate(body.DueDate, &fields),
+		DueDate: presentDate(body.DueDate),
 		TagID:   nullableID(body.TagID, "tagId", &fields).Value,
 	}
 	if body.Amount == nil {
@@ -294,14 +297,11 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := domain.ItemChangesInput{
-		Name:   optionalString(body.Name, "name", &fields),
-		Amount: optionalAmount(body.Amount, &fields),
-		CardID: nullableID(body.CardID, "cardId", &fields),
-		TagID:  nullableID(body.TagID, "tagId", &fields),
-	}
-	if body.DueDate != nil {
-		date := requiredDate(body.DueDate, &fields)
-		input.DueDate = &date
+		Name:    optionalString(body.Name, "name", &fields),
+		Amount:  optionalAmount(body.Amount, &fields),
+		DueDate: presentDate(body.DueDate),
+		CardID:  nullableID(body.CardID, "cardId", &fields),
+		TagID:   nullableID(body.TagID, "tagId", &fields),
 	}
 	if len(fields) > 0 {
 		writeBadRequest(w, fields...)
@@ -397,18 +397,17 @@ func optionalString(raw json.RawMessage, field string, fields *[]platform.FieldE
 	return value
 }
 
-// requiredDate reads a date as a string the domain then checks; a null is as wrong as a number.
-func requiredDate(raw json.RawMessage, fields *[]platform.FieldError) string {
+// presentDate leaves every rule to the domain: only whether the field was sent, and as what text. A
+// null or a number comes through as empty, which is no date either.
+func presentDate(raw json.RawMessage) *string {
 	if raw == nil {
-		*fields = append(*fields, platform.FieldError{Field: "dueDate", Message: "is required"})
-		return ""
+		return nil
 	}
-	var value *string
-	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-		*fields = append(*fields, platform.FieldError{Field: "dueDate", Message: domain.DueDateMessage})
-		return ""
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		value = ""
 	}
-	return *value
+	return &value
 }
 
 func optionalAmount(raw json.RawMessage, fields *[]platform.FieldError) *int64 {
