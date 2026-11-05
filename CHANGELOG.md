@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.11.0 — 2026-11-05 — Shared platforms
+
+- Added `internal/platforms`: people, platforms, memberships and payments under the contract's routes, with a full session
+  and, on mutations, CSRF. It reaches `periods` and `expenses`, and they reach it, only through application ports wired in
+  `cmd/server`, each built on the caller's transaction.
+- Shares are ⌈cost ÷ members⌉ in integer arithmetic (D10). An owner who is a member counts in the divisor, owes 0, gets no
+  income item and cannot record a payment (400). A write that would leave someone owing past the money bound is a 400.
+- Opening a month adds one income item per owing person in the same transaction as cloning templates, idempotent through
+  `period_items_period_person_income_key`, and none for a month a payment covers (D4). An advisory lock serializes writes to
+  people, platforms and payments with the reads that decide items.
+- Migration 00007 adds `platform_payments.period_item_id`. Marking a person-linked item received records its payment,
+  undoing removes exactly that one, recording a payment marks the month's item, and deleting a payment returns its item to
+  pending, or overdue in a closed month, each in one transaction (D4, D8).
+- A payment made through an item is dated within the item's month, so settling an overdue month still covers that month.
+- Decided: a month's items are settled when it opens. Platform, membership and payment changes never touch items of months
+  already open, and a person-linked item can be edited or deleted on its own, keeping its payment. Payments may overlap,
+  coverage never stacks, and `coveredUntil` is the furthest any payment reaches. Deleting a person with payments is a 409.
+- Contract: `GET /people` takes an optional `period`, which adds `coveredInPeriod` and `periodPaymentId`, because the paid
+  check needs them from the backend (D1). `Person.coveredUntil` now says the payment that reaches furthest. Payment, delete
+  and done endpoints document the sync above.
+- No new automated tests (T7).
+
 ## 0.10.0 — 2026-11-04 — Credit cards
 
 - `internal/cards` now covers the contract: create, get, edit and delete under `/api/v1/credit-cards`, with a full session

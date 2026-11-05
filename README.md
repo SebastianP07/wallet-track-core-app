@@ -97,7 +97,7 @@ Other operator commands:
   0 if it has no charges. Charges whose card was deleted form one last row with a null card, only when there are any, and
   count toward `total`.
 - Income has no due date and no urgency: sending `dueDate` for it is a 400, on a create or an edit. `personId` cannot be
-  set through these endpoints; Phase 9 generates those rows (D4).
+  set through these endpoints; opening a month generates those rows (D4).
 - `totals.toReceive` is Por llegar and `totals.toPay` is Por pagar (D1). Neither moves the other, and received, paid and
   overdue items are out of both.
 - In a closed month, adding an item is a 409. Toggling, editing and deleting are allowed. Undo returns an item to
@@ -107,6 +107,29 @@ Other operator commands:
   due date is always `none`.
 - A month's totals stay within `kernel.MaxMoney`. Each item write locks the month's row first, so it needs no advisory
   lock, and `POST /periods` refuses templates that would add up past the bound.
+
+## Platform behavior worth knowing
+
+- A share is ⌈cost ÷ members⌉ in whole pesos (D10). An owner who is a member counts in the divisor, owes 0, gets no income
+  item and cannot record a payment. A person's `monthlyOwed` is the sum of their rounded shares.
+- Opening a month adds one income item per person who owes it, named `Platforms — <name>`, for one month's shares, in the
+  transaction that clones the templates, and only when it creates the month (D4). A payment covering that month means no
+  item. What counts is the month being opened, not today.
+- Marking a person-linked item received records a payment: their `billingMonths`, `monthlyOwed × months`, and a date
+  within the item's month, today when today falls in it, or else its nearest day, so settling a month late still covers
+  that month. The item's own amount plays no part. Undo removes exactly that payment through `period_item_id`.
+- `POST /people/{id}/payments` marks the item of the month of `paidAt` received and links the two, if one is waiting. An
+  item already received keeps its own payment. `DELETE /platform-payments/{id}` returns a linked item to pending, or
+  overdue in a closed month. Each of these is one transaction.
+- Coverage counts from the payment's own month and never stacks. Payments may overlap: `coveredUntil` is the furthest any
+  reaches, and a month is covered by any payment that includes it.
+- A month's items are settled when it opens. Changing a platform, a membership or a frequency, or recording or undoing a
+  payment that reaches other months, leaves the items of months already open as they are. So a later month's pending item
+  stays after a payment comes to cover it, and undoing a payment does not create an item for a month opened meanwhile. The
+  person's row still says what is covered and owed, and a payment can be recorded without an item.
+- Editing a person-linked item changes only that month's row, never its payment. Deleting one keeps its payment and
+  coverage, and opening the month again does not bring it back.
+- Deleting a person with payments is a 409. Without payments, their memberships go and their items stay as plain income.
 
 ## Commands
 
@@ -172,6 +195,7 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `internal/expenses` | A month's items of every kind and their done toggle, with urgency (D11), Por pagar and Por llegar (D1): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/tags` | Tags (D5): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/cards` | Credit cards and a month's per-card totals (D3): `domain`, `application` and `adapters/{http,postgres}` |
+| `internal/platforms` | People, platforms, memberships and payments (D4, D8, D10), reached by `periods` and `expenses` only through application ports wired in `cmd/server`: `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
 | `internal/shared/platform` | Config, logging, the system clock, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |
@@ -187,6 +211,7 @@ contract, run `make contract-lint` here and `pnpm contract:refresh && pnpm contr
 
 - `platform_payments.covered_until` is a generated column: the last day of the last covered month, counting
   the month of `paid_at` (D8).
+- `platform_payments.period_item_id` is the income item a payment settled, unique, cleared if the item is deleted.
 - Foreign keys: deleting a template, tag, card or person keeps past items and only clears the link. Deleting a
   card also clears it on templates and platforms. Deleting a person with payments, or a period with items, is
   rejected. Sessions and recovery codes go with their user; audit events stay, without the link.

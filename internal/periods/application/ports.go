@@ -26,6 +26,10 @@ type Repository interface {
 	MarkPendingItemsOverdue(ctx context.Context, periodID string, kinds []domain.ItemKind) error
 	// AddItem does nothing when the month already has an item of that template.
 	AddItem(ctx context.Context, item domain.NewItem) error
+	// AddMemberItem does nothing when the month already has an income item of that person (D4).
+	AddMemberItem(ctx context.Context, item domain.NewMemberItem) error
+	// MemberIncome works inside this repository's transaction. Only a repository from WithinTx has it.
+	MemberIncome() MemberIncome
 
 	ListTemplates(ctx context.Context, filter TemplateFilter) ([]domain.Template, error)
 	// LockActiveTemplates holds the rows until the transaction ends, so that a template being cloned
@@ -36,6 +40,12 @@ type Repository interface {
 	CreateTemplate(ctx context.Context, template domain.NewTemplate) (domain.Template, error)
 	UpdateTemplate(ctx context.Context, template domain.Template) (domain.Template, error)
 	DeleteTemplate(ctx context.Context, id string) (found bool, err error)
+}
+
+// MemberIncome is what this module asks of the platforms module when opening a month: who owes it, and
+// how much (D4). A sum beyond the bound comes back as kernel.ErrMoneyOutOfRange.
+type MemberIncome interface {
+	Owing(ctx context.Context, month kernel.YearMonth) ([]domain.OwingMember, error)
 }
 
 type TxManager interface {

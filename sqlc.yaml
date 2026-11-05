@@ -49,3 +49,11 @@ sql:
         package: sqlcgen
         out: internal/tags/adapters/postgres/sqlcgen
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: migrations
+    queries: queries/platforms
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/platforms/adapters/postgres/sqlcgen
+        sql_package: pgx/v5

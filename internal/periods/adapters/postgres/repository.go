@@ -32,22 +32,31 @@ var templateConstraints = map[string]domain.Violation{
 	"recurring_templates_active_card_charge_has_card": {Field: "cardId", Message: "an active card charge template must have a card"},
 }
 
+// MembersInTx builds the platforms port on the transaction, so a month and its items commit together.
+type MembersInTx func(tx pgx.Tx) application.MemberIncome
+
 type TxManager struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	members MembersInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool) *TxManager {
-	return &TxManager{pool: pool}
+func NewTxManager(pool *pgxpool.Pool, members MembersInTx) *TxManager {
+	return &TxManager{pool: pool, members: members}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx)})
+		return fn(ctx, &Repository{queries: sqlcgen.New(tx), members: m.members(tx)})
 	})
 }
 
 type Repository struct {
 	queries *sqlcgen.Queries
+	members application.MemberIncome
+}
+
+func (r *Repository) MemberIncome() application.MemberIncome {
+	return r.members
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
@@ -134,6 +143,23 @@ func (r *Repository) AddItem(ctx context.Context, item domain.NewItem) error {
 		DueDate:    toDate(item.DueDate),
 		CardID:     cardID,
 		TagID:      tagID,
+	})
+}
+
+func (r *Repository) AddMemberItem(ctx context.Context, item domain.NewMemberItem) error {
+	periodID, err := parseID(item.PeriodID)
+	if err != nil {
+		return err
+	}
+	personID, err := parseID(item.PersonID)
+	if err != nil {
+		return err
+	}
+	return r.queries.AddMemberItem(ctx, sqlcgen.AddMemberItemParams{
+		PeriodID: periodID,
+		PersonID: personID,
+		Name:     item.Name,
+		Amount:   int64(item.Amount),
 	})
 }
 

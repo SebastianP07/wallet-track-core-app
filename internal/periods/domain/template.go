@@ -188,16 +188,24 @@ func (c TemplateChanges) ApplyTo(template Template) (Template, error) {
 	return template, nil
 }
 
-// CheckClonedTotals keeps a month from opening with a total the contract cannot carry: every list of
+// TotalsOutOfRange is what opening a month gets back when its items would add up past the bound.
+func TotalsOutOfRange() error {
+	return &ValidationError{Violations: []Violation{{Field: "period", Message: "active templates and platform members add up to more than 9007199254740991"}}}
+}
+
+// CheckOpeningTotals keeps a month from opening with a total the contract cannot carry: every list of
 // that month would answer 500, with no way to reach its items and fix them.
-func CheckClonedTotals(templates []Template) error {
+func CheckOpeningTotals(templates []Template, owing []OwingMember) error {
 	amounts := make(map[TemplateKind][]kernel.Money)
 	for _, template := range templates {
 		amounts[template.Kind] = append(amounts[template.Kind], template.Amount)
 	}
+	for _, member := range owing {
+		amounts[TemplateIncome] = append(amounts[TemplateIncome], member.Amount)
+	}
 	for _, kindAmounts := range amounts {
 		if _, err := kernel.SumMoney(kindAmounts); err != nil {
-			return &ValidationError{Violations: []Violation{{Field: "period", Message: "active templates add up to more than 9007199254740991"}}}
+			return TotalsOutOfRange()
 		}
 	}
 	return nil

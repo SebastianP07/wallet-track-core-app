@@ -100,6 +100,7 @@ type PlatformPayment struct {
 	CoveredUntil  pgtype.Date
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	PeriodItemID  pgtype.UUID
 }
 
 type RecoveryCode struct {

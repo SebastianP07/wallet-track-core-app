@@ -450,6 +450,9 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		platform.WriteProblem(w, http.StatusNotFound, "No such resource.")
 	case errors.Is(err, domain.ErrMonthClosed):
 		platform.WriteProblem(w, http.StatusConflict, "This month is closed, so it takes no new items.")
+	case errors.Is(err, kernel.ErrMoneyOutOfRange):
+		// From the member's payment an item's toggle records: what is owed, times the months it covers.
+		writeBadRequest(w, platform.FieldError{Field: "amount", Message: "the member's payment would pass 9007199254740991"})
 	default:
 		h.Logger.LogAttrs(r.Context(), slog.LevelError, "expenses request failed",
 			slog.String("error", err.Error()),

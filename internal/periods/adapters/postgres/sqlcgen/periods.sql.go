@@ -42,6 +42,29 @@ func (q *Queries) AddItem(ctx context.Context, arg AddItemParams) error {
 	return err
 }
 
+const addMemberItem = `-- name: AddMemberItem :exec
+INSERT INTO period_items (period_id, person_id, kind, name, amount)
+VALUES ($1, $2, 'income', $3, $4)
+ON CONFLICT (period_id, person_id) WHERE kind = 'income' AND person_id IS NOT NULL DO NOTHING
+`
+
+type AddMemberItemParams struct {
+	PeriodID pgtype.UUID
+	PersonID pgtype.UUID
+	Name     string
+	Amount   int64
+}
+
+func (q *Queries) AddMemberItem(ctx context.Context, arg AddMemberItemParams) error {
+	_, err := q.db.Exec(ctx, addMemberItem,
+		arg.PeriodID,
+		arg.PersonID,
+		arg.Name,
+		arg.Amount,
+	)
+	return err
+}
+
 const createPeriod = `-- name: CreatePeriod :one
 INSERT INTO periods (year, month)
 VALUES ($1, $2)

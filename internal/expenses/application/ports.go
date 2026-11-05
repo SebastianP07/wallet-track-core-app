@@ -28,6 +28,18 @@ type Repository interface {
 	UpdateItem(ctx context.Context, item domain.Item) (domain.Item, error)
 	SetItemStatus(ctx context.Context, item domain.Item) (domain.Item, error)
 	DeleteItem(ctx context.Context, id string) (found bool, err error)
+	// GetMemberItem returns domain.ErrItemNotFound when the person has no item in that month, opened or not.
+	GetMemberItem(ctx context.Context, personID string, month kernel.YearMonth) (domain.Item, error)
+	// MemberPayments works inside this repository's transaction. Only a repository from WithinTx has it.
+	MemberPayments() MemberPayments
+}
+
+// MemberPayments is what this module asks of the platforms module when a person-linked income item is
+// toggled, so that the item and its payment change together (D4, D8). An out of range amount comes back
+// as kernel.ErrMoneyOutOfRange.
+type MemberPayments interface {
+	RecordForItem(ctx context.Context, personID, itemID string, month kernel.YearMonth) error
+	RemoveForItem(ctx context.Context, itemID string) error
 }
 
 type TxManager interface {

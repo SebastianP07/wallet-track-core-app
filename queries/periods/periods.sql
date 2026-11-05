@@ -36,6 +36,11 @@ INSERT INTO period_items (period_id, template_id, kind, name, amount, due_date, 
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (period_id, template_id) WHERE template_id IS NOT NULL DO NOTHING;
 
+-- name: AddMemberItem :exec
+INSERT INTO period_items (period_id, person_id, kind, name, amount)
+VALUES ($1, $2, 'income', $3, $4)
+ON CONFLICT (period_id, person_id) WHERE kind = 'income' AND person_id IS NOT NULL DO NOTHING;
+
 -- name: ListTemplates :many
 SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
 FROM recurring_templates

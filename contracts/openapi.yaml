@@ -676,6 +676,7 @@ paths:
       summary: Delete an item
       tags:
       - Period items
+      description: A payment linked to a person-linked income item stays, as history, with its coverage.
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -697,7 +698,8 @@ paths:
       tags:
       - Period items
       description: Idempotent. Never changes an account balance (D6). An overdue item stays in its original
-        month (D7).
+        month (D7). On a person-linked income item this records that person's payment in the same transaction
+        (D4, D8), dated within the item's month and covering their `billingMonths`.
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -722,7 +724,8 @@ paths:
       summary: Undo paid or received
       tags:
       - Period items
-      description: Idempotent.
+      description: Idempotent. On a person-linked income item this removes the payment linked to it, and no
+        other, in the same transaction (D4, D8).
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -1089,6 +1092,12 @@ paths:
       summary: List people
       tags:
       - People
+      parameters:
+      - name: period
+        in: query
+        description: Adds `coveredInPeriod` and `periodPaymentId` for this month, which need not be opened.
+        schema:
+          $ref: '#/components/schemas/YearMonth'
       responses:
         '200':
           description: All people.
@@ -1096,6 +1105,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PersonList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
@@ -1229,7 +1240,8 @@ paths:
       tags:
       - People
       description: The backend computes `amount` and `coveredUntil` (D1, D8), and marks the person's income
-        item of that month received (D4).
+        item of the month of `paidAt` received, if one is waiting (D4). Coverage counts from that month and does
+        not stack on earlier coverage. 400 for someone who owes nothing, the owner included.
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -1260,6 +1272,8 @@ paths:
       summary: Delete a mistaken payment
       tags:
       - People
+      description: Returns the income item this payment settled, if any, to pending, or to overdue in a closed
+        month. Never touches another payment.
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -2521,10 +2535,19 @@ components:
           - $ref: '#/components/schemas/Date'
           - type: 'null'
         coveredUntil:
-          description: Last day covered by the latest payment (D8).
+          description: Last day covered by the payment that reaches furthest, so a shorter payment made later
+            takes nothing away (D8).
           oneOf:
           - $ref: '#/components/schemas/Date'
           - type: 'null'
+        coveredInPeriod:
+          type: boolean
+          description: Only with the `period` query parameter. Whether any payment covers that month.
+        periodPaymentId:
+          allOf:
+          - $ref: '#/components/schemas/Id'
+          description: Only with the `period` query parameter, when a payment covers that month. The most recent
+            one that does, which is the one to delete to undo it.
         createdAt:
           $ref: '#/components/schemas/Timestamp'
         updatedAt:

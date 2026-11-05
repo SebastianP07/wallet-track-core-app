@@ -104,6 +104,61 @@ func (q *Queries) GetItem(ctx context.Context, id pgtype.UUID) (GetItemRow, erro
 	return i, err
 }
 
+const getMemberItem = `-- name: GetMemberItem :one
+SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
+  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+FROM period_items AS i
+JOIN periods AS p ON p.id = i.period_id
+WHERE p.year = $1 AND p.month = $2 AND i.person_id = $3 AND i.kind = 'income'
+`
+
+type GetMemberItemParams struct {
+	Year     int32
+	Month    int32
+	PersonID pgtype.UUID
+}
+
+type GetMemberItemRow struct {
+	ID         pgtype.UUID
+	Year       int32
+	Month      int32
+	TemplateID pgtype.UUID
+	PersonID   pgtype.UUID
+	Kind       string
+	Name       string
+	Amount     int64
+	DueDate    pgtype.Date
+	CardID     pgtype.UUID
+	TagID      pgtype.UUID
+	Status     string
+	DoneAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) GetMemberItem(ctx context.Context, arg GetMemberItemParams) (GetMemberItemRow, error) {
+	row := q.db.QueryRow(ctx, getMemberItem, arg.Year, arg.Month, arg.PersonID)
+	var i GetMemberItemRow
+	err := row.Scan(
+		&i.ID,
+		&i.Year,
+		&i.Month,
+		&i.TemplateID,
+		&i.PersonID,
+		&i.Kind,
+		&i.Name,
+		&i.Amount,
+		&i.DueDate,
+		&i.CardID,
+		&i.TagID,
+		&i.Status,
+		&i.DoneAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPeriod = `-- name: GetPeriod :one
 SELECT id, year, month, status
 FROM periods

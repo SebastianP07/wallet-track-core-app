@@ -29,26 +29,40 @@ var itemConstraints = map[string]domain.Violation{
 	"period_items_card_id_fkey": {Field: "cardId", Message: "must be an existing card"},
 }
 
+// PaymentsInTx builds the platforms port on the transaction, so an item and its payment commit together.
+type PaymentsInTx func(tx pgx.Tx) application.MemberPayments
+
 type TxManager struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	payments PaymentsInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool) *TxManager {
-	return &TxManager{pool: pool}
+func NewTxManager(pool *pgxpool.Pool, payments PaymentsInTx) *TxManager {
+	return &TxManager{pool: pool, payments: payments}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx)})
+		return fn(ctx, &Repository{queries: sqlcgen.New(tx), payments: m.payments(tx)})
 	})
 }
 
 type Repository struct {
-	queries *sqlcgen.Queries
+	queries  *sqlcgen.Queries
+	payments application.MemberPayments
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{queries: sqlcgen.New(pool)}
+}
+
+// NewRepositoryInTx is this module's repository on another module's transaction, for the ports it serves.
+func NewRepositoryInTx(tx pgx.Tx) *Repository {
+	return &Repository{queries: sqlcgen.New(tx)}
+}
+
+func (r *Repository) MemberPayments() application.MemberPayments {
+	return r.payments
 }
 
 func (r *Repository) GetPeriod(ctx context.Context, month kernel.YearMonth) (domain.Period, error) {
@@ -183,6 +197,25 @@ func (r *Repository) SetItemStatus(ctx context.Context, item domain.Item) (domai
 		return domain.Item{}, domain.ErrItemNotFound
 	}
 	return r.getItem(ctx, uuid)
+}
+
+func (r *Repository) GetMemberItem(ctx context.Context, personID string, month kernel.YearMonth) (domain.Item, error) {
+	person, err := parseID(personID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	row, err := r.queries.GetMemberItem(ctx, sqlcgen.GetMemberItemParams{
+		Year:     yearColumn(month),
+		Month:    monthColumn(month),
+		PersonID: person,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Item{}, domain.ErrItemNotFound
+	}
+	if err != nil {
+		return domain.Item{}, err
+	}
+	return toItem(sqlcgen.GetItemRow(row)), nil
 }
 
 func (r *Repository) DeleteItem(ctx context.Context, id string) (bool, error) {

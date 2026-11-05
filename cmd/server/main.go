@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	accountshttp "github.com/SebastianP07/wallet-track-core-app/internal/accounts/adapters/http"
@@ -32,6 +33,11 @@ import (
 	periodshttp "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/http"
 	periodspostgres "github.com/SebastianP07/wallet-track-core-app/internal/periods/adapters/postgres"
 	periodsapplication "github.com/SebastianP07/wallet-track-core-app/internal/periods/application"
+	periodsdomain "github.com/SebastianP07/wallet-track-core-app/internal/periods/domain"
+	platformshttp "github.com/SebastianP07/wallet-track-core-app/internal/platforms/adapters/http"
+	platformspostgres "github.com/SebastianP07/wallet-track-core-app/internal/platforms/adapters/postgres"
+	platformsapplication "github.com/SebastianP07/wallet-track-core-app/internal/platforms/application"
+	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/platform"
 	tagshttp "github.com/SebastianP07/wallet-track-core-app/internal/tags/adapters/http"
 	tagspostgres "github.com/SebastianP07/wallet-track-core-app/internal/tags/adapters/postgres"
@@ -102,6 +108,7 @@ func run() error {
 			newCardsHandler(pool, authHandler, logger).Register,
 			newExpensesHandler(pool, authHandler, logger).Register,
 			newTagsHandler(pool, authHandler, logger).Register,
+			newPlatformsHandler(pool, authHandler, logger).Register,
 		),
 		platform.RequestID,
 		platform.LogRequests(logger),
@@ -197,7 +204,7 @@ func newAccountsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 
 func newPeriodsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *periodshttp.Handler {
 	repo := periodspostgres.NewRepository(pool)
-	tx := periodspostgres.NewTxManager(pool)
+	tx := periodspostgres.NewTxManager(pool, memberIncomeInTx)
 	return periodshttp.NewHandler(periodshttp.Config{
 		UseCases: periodshttp.UseCases{
 			ListPeriods:    periodsapplication.NewListPeriods(repo),
@@ -235,7 +242,7 @@ func newCardsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Lo
 
 func newExpensesHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *expenseshttp.Handler {
 	repo := expensespostgres.NewRepository(pool)
-	tx := expensespostgres.NewTxManager(pool)
+	tx := expensespostgres.NewTxManager(pool, memberPaymentsInTx)
 	clock := platform.SystemClock{}
 	return expenseshttp.NewHandler(expenseshttp.Config{
 		UseCases: expenseshttp.UseCases{
@@ -266,6 +273,65 @@ func newTagsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Log
 		RequireCSRF:    auth.CSRF.Protect,
 		Logger:         logger,
 	})
+}
+
+func newPlatformsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *platformshttp.Handler {
+	repo := platformspostgres.NewRepository(pool)
+	tx := platformspostgres.NewTxManager(pool, incomeItemsInTx)
+	return platformshttp.NewHandler(platformshttp.Config{
+		UseCases: platformshttp.UseCases{
+			ListPeople:     platformsapplication.NewListPeople(repo),
+			GetPerson:      platformsapplication.NewGetPerson(repo),
+			CreatePerson:   platformsapplication.NewCreatePerson(tx),
+			UpdatePerson:   platformsapplication.NewUpdatePerson(tx),
+			DeletePerson:   platformsapplication.NewDeletePerson(tx),
+			ListPayments:   platformsapplication.NewListPersonPayments(repo),
+			RecordPayment:  platformsapplication.NewRecordPayment(tx, platform.SystemClock{}),
+			DeletePayment:  platformsapplication.NewDeletePayment(tx),
+			ListPlatforms:  platformsapplication.NewListPlatforms(repo),
+			GetPlatform:    platformsapplication.NewGetPlatform(repo),
+			CreatePlatform: platformsapplication.NewCreatePlatform(tx),
+			UpdatePlatform: platformsapplication.NewUpdatePlatform(tx),
+			DeletePlatform: platformsapplication.NewDeletePlatform(tx),
+			AddMember:      platformsapplication.NewAddMember(tx),
+			RemoveMember:   platformsapplication.NewRemoveMember(tx),
+		},
+		RequireSession: auth.RequireFullSession,
+		RequireCSRF:    auth.CSRF.Protect,
+		Logger:         logger,
+	})
+}
+
+// The ports between modules, each built on the caller's transaction, so that what crosses a module
+// boundary commits or rolls back with the rest. None calls back across a boundary.
+
+func memberIncomeInTx(tx pgx.Tx) periodsapplication.MemberIncome {
+	return memberIncome{platformsapplication.NewMemberIncome(platformspostgres.NewRepositoryInTx(tx))}
+}
+
+func memberPaymentsInTx(tx pgx.Tx) expensesapplication.MemberPayments {
+	return platformsapplication.NewItemPayments(platformspostgres.NewRepositoryInTx(tx), platform.SystemClock{})
+}
+
+func incomeItemsInTx(tx pgx.Tx) platformsapplication.IncomeItems {
+	return expensesapplication.NewMemberItems(expensespostgres.NewRepositoryInTx(tx))
+}
+
+// memberIncome carries the answer of one module in the types of the other, which it cannot import.
+type memberIncome struct {
+	source *platformsapplication.MemberIncome
+}
+
+func (m memberIncome) Owing(ctx context.Context, month kernel.YearMonth) ([]periodsdomain.OwingMember, error) {
+	owing, err := m.source.Owing(ctx, month)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]periodsdomain.OwingMember, 0, len(owing))
+	for _, member := range owing {
+		members = append(members, periodsdomain.OwingMember(member))
+	}
+	return members, nil
 }
 
 var _ http.Handler = http.NewServeMux()

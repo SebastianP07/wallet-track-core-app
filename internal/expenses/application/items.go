@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/SebastianP07/wallet-track-core-app/internal/expenses/domain"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
@@ -188,10 +189,13 @@ func NewMarkItemDone(tx TxManager, clock Clock) *MarkItemDone {
 	return &MarkItemDone{tx: tx, clock: clock}
 }
 
+// Execute records the member's payment when the item is person-linked (D4, D8). A repeat records nothing.
 func (u *MarkItemDone) Execute(ctx context.Context, id string) (ItemView, error) {
 	now := u.clock.Now()
 	return changeStatus(ctx, u.tx, u.clock, id, func(item domain.Item, _ domain.Period) domain.Item {
 		return item.Done(now)
+	}, func(ctx context.Context, payments MemberPayments, item domain.Item) error {
+		return payments.RecordForItem(ctx, *item.PersonID, item.ID, item.Month)
 	})
 }
 
@@ -204,17 +208,24 @@ func NewUnmarkItemDone(tx TxManager, clock Clock) *UnmarkItemDone {
 	return &UnmarkItemDone{tx: tx, clock: clock}
 }
 
+// Execute removes the payment that marking this item recorded, and no other (D4, D8).
 func (u *UnmarkItemDone) Execute(ctx context.Context, id string) (ItemView, error) {
-	return changeStatus(ctx, u.tx, u.clock, id, domain.Item.Undone)
+	return changeStatus(ctx, u.tx, u.clock, id, domain.Item.Undone,
+		func(ctx context.Context, payments MemberPayments, item domain.Item) error {
+			return payments.RemoveForItem(ctx, item.ID)
+		})
 }
 
-// changeStatus writes only a real change, so a repeated toggle leaves updated_at alone.
+// changeStatus writes only a real change, so a repeated toggle leaves updated_at alone and a person-linked
+// item's payment is touched once. The payment goes first: it takes the platforms lock, which a person's
+// delete holds while it clears this row, so taking it before the row keeps the two from deadlocking.
 func changeStatus(
 	ctx context.Context,
 	tx TxManager,
 	clock Clock,
 	id string,
 	change func(domain.Item, domain.Period) domain.Item,
+	syncPayment func(context.Context, MemberPayments, domain.Item) error,
 ) (ItemView, error) {
 	var result domain.Item
 	err := tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
@@ -229,6 +240,11 @@ func changeStatus(
 		result = change(item, period)
 		if result.Status == item.Status {
 			return nil
+		}
+		if item.PersonID != nil {
+			if err := syncPayment(ctx, repo.MemberPayments(), item); err != nil {
+				return err
+			}
 		}
 		result, err = repo.SetItemStatus(ctx, result)
 		return err
@@ -247,4 +263,72 @@ func checkTotals(items []domain.Item) error {
 		return err
 	}
 	return nil
+}
+
+// MemberItems is what the platforms module asks of this one when a payment is recorded or deleted (D4,
+// D8). Built on a repository from WithinTx, it runs in that payment's transaction.
+type MemberItems struct {
+	repo Repository
+}
+
+func NewMemberItems(repo Repository) *MemberItems {
+	return &MemberItems{repo: repo}
+}
+
+// LockMonth is no error for a month not opened: there is no item to race.
+func (m *MemberItems) LockMonth(ctx context.Context, month kernel.YearMonth) error {
+	_, err := m.repo.LockPeriod(ctx, month)
+	if errors.Is(err, domain.ErrPeriodNotFound) {
+		return nil
+	}
+	return err
+}
+
+// LockMonthOfItem is no error for an item already gone.
+func (m *MemberItems) LockMonthOfItem(ctx context.Context, itemID string) error {
+	_, err := m.repo.LockPeriodOfItem(ctx, itemID)
+	if errors.Is(err, domain.ErrItemNotFound) {
+		return nil
+	}
+	return err
+}
+
+// MarkReceived returns the id of the item it marked. An item already received keeps its own payment, so it
+// returns nil, as it does when the person has no item that month.
+func (m *MemberItems) MarkReceived(ctx context.Context, personID string, month kernel.YearMonth, now time.Time) (*string, error) {
+	item, err := m.repo.GetMemberItem(ctx, personID, month)
+	if errors.Is(err, domain.ErrItemNotFound) {
+		return nil, nil //nolint:nilnil // No item is an answer here, not a failure.
+	}
+	if err != nil {
+		return nil, err
+	}
+	if item.Status == domain.StatusDone {
+		return nil, nil //nolint:nilnil // The answer is that this payment settles no item.
+	}
+	if _, err := m.repo.SetItemStatus(ctx, item.Done(now)); err != nil {
+		return nil, err
+	}
+	return &item.ID, nil
+}
+
+// Unmark is no error for an item already gone. The caller holds the month's row.
+func (m *MemberItems) Unmark(ctx context.Context, itemID string) error {
+	period, err := m.repo.LockPeriodOfItem(ctx, itemID)
+	if errors.Is(err, domain.ErrItemNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	item, err := m.repo.GetItem(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	undone := item.Undone(period)
+	if undone.Status == item.Status {
+		return nil
+	}
+	_, err = m.repo.SetItemStatus(ctx, undone)
+	return err
 }

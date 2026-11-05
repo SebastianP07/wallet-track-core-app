@@ -87,3 +87,22 @@ func ItemFrom(template Template, period Period) NewItem {
 	}
 	return item
 }
+
+// OwingMember is a platform member who owes a month, as the platforms module says (D4).
+type OwingMember struct {
+	PersonID string
+	ItemName string
+	Amount   kernel.Money
+}
+
+// NewMemberItem is a member's pending income item that has not been stored yet.
+type NewMemberItem struct {
+	PeriodID string
+	PersonID string
+	Name     string
+	Amount   kernel.Money
+}
+
+func MemberItemFrom(member OwingMember, period Period) NewMemberItem {
+	return NewMemberItem{PeriodID: period.ID, PersonID: member.PersonID, Name: member.ItemName, Amount: member.Amount}
+}
