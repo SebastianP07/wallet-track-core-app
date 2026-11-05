@@ -38,6 +38,29 @@ func (q *Queries) ActivateMFA(ctx context.Context, arg ActivateMFAParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const consumePasskeyChallenge = `-- name: ConsumePasskeyChallenge :one
+DELETE FROM passkey_challenges
+WHERE session_id = $1 AND purpose = $2
+RETURNING ceremony_state, expires_at
+`
+
+type ConsumePasskeyChallengeParams struct {
+	SessionID pgtype.UUID
+	Purpose   string
+}
+
+type ConsumePasskeyChallengeRow struct {
+	CeremonyState []byte
+	ExpiresAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ConsumePasskeyChallenge(ctx context.Context, arg ConsumePasskeyChallengeParams) (ConsumePasskeyChallengeRow, error) {
+	row := q.db.QueryRow(ctx, consumePasskeyChallenge, arg.SessionID, arg.Purpose)
+	var i ConsumePasskeyChallengeRow
+	err := row.Scan(&i.CeremonyState, &i.ExpiresAt)
+	return i, err
+}
+
 const consumeRecoveryCode = `-- name: ConsumeRecoveryCode :execrows
 UPDATE recovery_codes SET used_at = $3 WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
 `
@@ -74,6 +97,17 @@ func (q *Queries) ConsumeTOTPStep(ctx context.Context, arg ConsumeTOTPStepParams
 	return result.RowsAffected(), nil
 }
 
+const countPasskeys = `-- name: CountPasskeys :one
+SELECT count(*) FROM passkeys WHERE user_id = $1
+`
+
+func (q *Queries) CountPasskeys(ctx context.Context, userID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countPasskeys, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
 SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL
 `
@@ -94,6 +128,32 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteExpiredPasskeyChallenges = `-- name: DeleteExpiredPasskeyChallenges :exec
+DELETE FROM passkey_challenges WHERE expires_at <= $1
+`
+
+func (q *Queries) DeleteExpiredPasskeyChallenges(ctx context.Context, expiresAt pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, deleteExpiredPasskeyChallenges, expiresAt)
+	return err
+}
+
+const deletePasskey = `-- name: DeletePasskey :execrows
+DELETE FROM passkeys WHERE id = $1 AND user_id = $2
+`
+
+type DeletePasskeyParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) DeletePasskey(ctx context.Context, arg DeletePasskeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePasskey, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
@@ -208,6 +268,53 @@ func (q *Queries) InsertAuthEvent(ctx context.Context, arg InsertAuthEventParams
 	return err
 }
 
+const insertPasskey = `-- name: InsertPasskey :one
+INSERT INTO passkeys (user_id, name, credential_id, public_key, transports, sign_count, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (credential_id) DO NOTHING
+RETURNING id, user_id, name, credential_id, public_key, transports, sign_count, backup_eligible, backup_state, last_used_at, created_at, updated_at
+`
+
+type InsertPasskeyParams struct {
+	UserID         pgtype.UUID
+	Name           string
+	CredentialID   []byte
+	PublicKey      []byte
+	Transports     []string
+	SignCount      int64
+	BackupEligible bool
+	BackupState    bool
+}
+
+func (q *Queries) InsertPasskey(ctx context.Context, arg InsertPasskeyParams) (Passkey, error) {
+	row := q.db.QueryRow(ctx, insertPasskey,
+		arg.UserID,
+		arg.Name,
+		arg.CredentialID,
+		arg.PublicKey,
+		arg.Transports,
+		arg.SignCount,
+		arg.BackupEligible,
+		arg.BackupState,
+	)
+	var i Passkey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.CredentialID,
+		&i.PublicKey,
+		&i.Transports,
+		&i.SignCount,
+		&i.BackupEligible,
+		&i.BackupState,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
 INSERT INTO recovery_codes (user_id, code_hash) VALUES ($1, $2)
 `
@@ -302,6 +409,95 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) (User, e
 	return i, err
 }
 
+const listActiveSessions = `-- name: ListActiveSessions :many
+SELECT id, user_agent, ip, mfa_verified_at, last_seen_at, created_at
+FROM sessions
+WHERE user_id = $1
+  AND revoked_at IS NULL
+  AND expires_at > $2
+  AND (mfa_verified_at IS NULL OR last_seen_at > $3)
+ORDER BY last_seen_at DESC, id
+`
+
+type ListActiveSessionsParams struct {
+	UserID     pgtype.UUID
+	Now        pgtype.Timestamptz
+	IdleCutoff pgtype.Timestamptz
+}
+
+type ListActiveSessionsRow struct {
+	ID            pgtype.UUID
+	UserAgent     pgtype.Text
+	Ip            *netip.Addr
+	MfaVerifiedAt pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ListActiveSessions(ctx context.Context, arg ListActiveSessionsParams) ([]ListActiveSessionsRow, error) {
+	rows, err := q.db.Query(ctx, listActiveSessions, arg.UserID, arg.Now, arg.IdleCutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveSessionsRow
+	for rows.Next() {
+		var i ListActiveSessionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserAgent,
+			&i.Ip,
+			&i.MfaVerifiedAt,
+			&i.LastSeenAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPasskeys = `-- name: ListPasskeys :many
+SELECT id, user_id, name, credential_id, public_key, transports, sign_count, backup_eligible, backup_state, last_used_at, created_at, updated_at FROM passkeys WHERE user_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) ListPasskeys(ctx context.Context, userID pgtype.UUID) ([]Passkey, error) {
+	rows, err := q.db.Query(ctx, listPasskeys, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Passkey
+	for rows.Next() {
+		var i Passkey
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.CredentialID,
+			&i.PublicKey,
+			&i.Transports,
+			&i.SignCount,
+			&i.BackupEligible,
+			&i.BackupState,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsersWithTOTPSecret = `-- name: ListUsersWithTOTPSecret :many
 SELECT id, totp_secret_enc, totp_key_id FROM users WHERE totp_secret_enc IS NOT NULL FOR UPDATE
 `
@@ -361,6 +557,92 @@ func (q *Queries) PromoteSession(ctx context.Context, arg PromoteSessionParams) 
 	return result.RowsAffected(), nil
 }
 
+const putPasskeyChallenge = `-- name: PutPasskeyChallenge :exec
+INSERT INTO passkey_challenges (session_id, purpose, ceremony_state, expires_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (session_id, purpose)
+DO UPDATE SET ceremony_state = EXCLUDED.ceremony_state, expires_at = EXCLUDED.expires_at
+`
+
+type PutPasskeyChallengeParams struct {
+	SessionID     pgtype.UUID
+	Purpose       string
+	CeremonyState []byte
+	ExpiresAt     pgtype.Timestamptz
+}
+
+func (q *Queries) PutPasskeyChallenge(ctx context.Context, arg PutPasskeyChallengeParams) error {
+	_, err := q.db.Exec(ctx, putPasskeyChallenge,
+		arg.SessionID,
+		arg.Purpose,
+		arg.CeremonyState,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const recordPasskeyUse = `-- name: RecordPasskeyUse :execrows
+UPDATE passkeys
+SET sign_count = $1, backup_state = $2, last_used_at = $3
+WHERE id = $4
+  AND user_id = $5
+  AND (sign_count < $1 OR (sign_count = 0 AND $1 = 0))
+`
+
+type RecordPasskeyUseParams struct {
+	NewCount    int64
+	BackupState bool
+	Now         pgtype.Timestamptz
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+}
+
+// A counter must grow, unless the authenticator keeps none and it stays at zero. Checking here too
+// means two assertions racing with one count cannot both pass.
+func (q *Queries) RecordPasskeyUse(ctx context.Context, arg RecordPasskeyUseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordPasskeyUse,
+		arg.NewCount,
+		arg.BackupState,
+		arg.Now,
+		arg.ID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const renamePasskey = `-- name: RenamePasskey :one
+UPDATE passkeys SET name = $3 WHERE id = $1 AND user_id = $2 RETURNING id, user_id, name, credential_id, public_key, transports, sign_count, backup_eligible, backup_state, last_used_at, created_at, updated_at
+`
+
+type RenamePasskeyParams struct {
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+	Name   string
+}
+
+func (q *Queries) RenamePasskey(ctx context.Context, arg RenamePasskeyParams) (Passkey, error) {
+	row := q.db.QueryRow(ctx, renamePasskey, arg.ID, arg.UserID, arg.Name)
+	var i Passkey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.CredentialID,
+		&i.PublicKey,
+		&i.Transports,
+		&i.SignCount,
+		&i.BackupEligible,
+		&i.BackupState,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const replaceTOTPSecret = `-- name: ReplaceTOTPSecret :exec
 UPDATE users SET totp_secret_enc = $2, totp_key_id = $3 WHERE id = $1
 `
@@ -383,6 +665,28 @@ UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1
 func (q *Queries) ResetFailedAttempts(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, resetFailedAttempts, id)
 	return err
+}
+
+const revokeOwnedSession = `-- name: RevokeOwnedSession :execrows
+UPDATE sessions SET revoked_at = $1
+WHERE id = $2
+  AND user_id = $3
+  AND revoked_at IS NULL
+  AND expires_at > $1
+`
+
+type RevokeOwnedSessionParams struct {
+	Now    pgtype.Timestamptz
+	ID     pgtype.UUID
+	UserID pgtype.UUID
+}
+
+func (q *Queries) RevokeOwnedSession(ctx context.Context, arg RevokeOwnedSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeOwnedSession, arg.Now, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSession = `-- name: RevokeSession :exec

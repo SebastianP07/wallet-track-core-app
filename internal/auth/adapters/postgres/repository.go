@@ -257,6 +257,183 @@ func (r *Repository) RevokeUserSessions(ctx context.Context, userID string, now 
 	return r.queries.RevokeUserSessions(ctx, sqlcgen.RevokeUserSessionsParams{UserID: id, RevokedAt: timestamp(now)})
 }
 
+func (r *Repository) ListActiveSessions(ctx context.Context, userID string, now time.Time) ([]domain.ActiveSession, error) {
+	id, err := parseID(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.queries.ListActiveSessions(ctx, sqlcgen.ListActiveSessionsParams{
+		UserID:     id,
+		Now:        timestamp(now),
+		IdleCutoff: timestamp(now.Add(-domain.SessionIdleTimeout)),
+	})
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]domain.ActiveSession, 0, len(rows))
+	for _, row := range rows {
+		session := domain.ActiveSession{
+			ID:         row.ID.String(),
+			UserAgent:  row.UserAgent.String,
+			Pending:    !row.MfaVerifiedAt.Valid,
+			CreatedAt:  row.CreatedAt.Time,
+			LastSeenAt: row.LastSeenAt.Time,
+		}
+		if row.Ip != nil {
+			session.IP = *row.Ip
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
+}
+
+func (r *Repository) RevokeOwnedSession(ctx context.Context, userID, sessionID string, now time.Time) (bool, error) {
+	owner, err := parseID(userID)
+	if err != nil {
+		return false, err
+	}
+	id, err := parseID(sessionID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := r.queries.RevokeOwnedSession(ctx, sqlcgen.RevokeOwnedSessionParams{ID: id, UserID: owner, Now: timestamp(now)})
+	return rows == 1, err
+}
+
+func (r *Repository) CountPasskeys(ctx context.Context, userID string) (int64, error) {
+	id, err := parseID(userID)
+	if err != nil {
+		return 0, err
+	}
+	return r.queries.CountPasskeys(ctx, id)
+}
+
+func (r *Repository) ListPasskeys(ctx context.Context, userID string) ([]domain.Passkey, error) {
+	id, err := parseID(userID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.queries.ListPasskeys(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	passkeys := make([]domain.Passkey, 0, len(rows))
+	for _, row := range rows {
+		passkeys = append(passkeys, toPasskey(row))
+	}
+	return passkeys, nil
+}
+
+func (r *Repository) CreatePasskey(ctx context.Context, userID, name string, credential application.NewPasskeyCredential) (domain.Passkey, error) {
+	id, err := parseID(userID)
+	if err != nil {
+		return domain.Passkey{}, err
+	}
+	row, err := r.queries.InsertPasskey(ctx, sqlcgen.InsertPasskeyParams{
+		UserID:         id,
+		Name:           name,
+		CredentialID:   credential.CredentialID,
+		PublicKey:      credential.PublicKey,
+		Transports:     credential.Transports,
+		SignCount:      int64(credential.SignCount),
+		BackupEligible: credential.BackupEligible,
+		BackupState:    credential.BackupState,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Passkey{}, domain.ErrPasskeyExists
+	}
+	if err != nil {
+		return domain.Passkey{}, err
+	}
+	return toPasskey(row), nil
+}
+
+func (r *Repository) RenamePasskey(ctx context.Context, userID, passkeyID, name string) (domain.Passkey, error) {
+	owner, err := parseID(userID)
+	if err != nil {
+		return domain.Passkey{}, err
+	}
+	id, err := parseID(passkeyID)
+	if err != nil {
+		return domain.Passkey{}, err
+	}
+	row, err := r.queries.RenamePasskey(ctx, sqlcgen.RenamePasskeyParams{ID: id, UserID: owner, Name: name})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Passkey{}, domain.ErrNotFound
+	}
+	if err != nil {
+		return domain.Passkey{}, err
+	}
+	return toPasskey(row), nil
+}
+
+func (r *Repository) DeletePasskey(ctx context.Context, userID, passkeyID string) (bool, error) {
+	owner, err := parseID(userID)
+	if err != nil {
+		return false, err
+	}
+	id, err := parseID(passkeyID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := r.queries.DeletePasskey(ctx, sqlcgen.DeletePasskeyParams{ID: id, UserID: owner})
+	return rows == 1, err
+}
+
+func (r *Repository) RecordPasskeyUse(ctx context.Context, userID string, assertion application.PasskeyAssertion, now time.Time) (bool, error) {
+	owner, err := parseID(userID)
+	if err != nil {
+		return false, err
+	}
+	id, err := parseID(assertion.PasskeyID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := r.queries.RecordPasskeyUse(ctx, sqlcgen.RecordPasskeyUseParams{
+		ID:          id,
+		UserID:      owner,
+		NewCount:    int64(assertion.SignCount),
+		BackupState: assertion.BackupState,
+		Now:         timestamp(now),
+	})
+	return rows == 1, err
+}
+
+func (r *Repository) PutPasskeyChallenge(ctx context.Context, challenge application.PasskeyChallenge) error {
+	id, err := parseID(challenge.SessionID)
+	if err != nil {
+		return err
+	}
+	return r.queries.PutPasskeyChallenge(ctx, sqlcgen.PutPasskeyChallengeParams{
+		SessionID:     id,
+		Purpose:       string(challenge.Purpose),
+		CeremonyState: challenge.State,
+		ExpiresAt:     timestamp(challenge.ExpiresAt),
+	})
+}
+
+func (r *Repository) ConsumePasskeyChallenge(ctx context.Context, sessionID string, purpose domain.ChallengePurpose, now time.Time) ([]byte, bool, error) {
+	id, err := parseID(sessionID)
+	if err != nil {
+		return nil, false, err
+	}
+	row, err := r.queries.ConsumePasskeyChallenge(ctx, sqlcgen.ConsumePasskeyChallengeParams{SessionID: id, Purpose: string(purpose)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !now.Before(row.ExpiresAt.Time) {
+		return nil, false, nil
+	}
+	return row.CeremonyState, true, nil
+}
+
+func (r *Repository) DeleteExpiredPasskeyChallenges(ctx context.Context, now time.Time) error {
+	return r.queries.DeleteExpiredPasskeyChallenges(ctx, timestamp(now))
+}
+
 func (r *Repository) ReplaceRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error {
 	id, err := parseID(userID)
 	if err != nil {
@@ -322,6 +499,21 @@ func toUser(row sqlcgen.User) domain.User {
 		EnrollmentSecretHash:      row.MfaEnrollmentTokenHash,
 		EnrollmentSecretExpiresAt: row.MfaEnrollmentTokenExpiresAt.Time,
 		LockedUntil:               row.LockedUntil.Time,
+	}
+}
+
+func toPasskey(row sqlcgen.Passkey) domain.Passkey {
+	return domain.Passkey{
+		ID:             row.ID.String(),
+		Name:           row.Name,
+		CredentialID:   row.CredentialID,
+		PublicKey:      row.PublicKey,
+		Transports:     row.Transports,
+		SignCount:      uint32(row.SignCount), //nolint:gosec // Written from a uint32 and checked non-negative by the table.
+		BackupEligible: row.BackupEligible,
+		BackupState:    row.BackupState,
+		LastUsedAt:     row.LastUsedAt.Time,
+		CreatedAt:      row.CreatedAt.Time,
 	}
 }
 

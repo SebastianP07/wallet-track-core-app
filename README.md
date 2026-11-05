@@ -57,7 +57,7 @@ To log in through the web app instead, run the API as below, then follow the "Ru
 the `wallet-track-app` README. The first sign-in asks for the enrollment secret.
 
 ```sh
-make dev INSECURE_DEV_COOKIES=true TRUSTED_PROXIES=127.0.0.1/32,::1/128 ALLOWED_ORIGINS=http://localhost:3000
+make dev INSECURE_DEV_COOKIES=true TRUSTED_PROXIES=127.0.0.1/32,::1/128 ALLOWED_ORIGINS=http://localhost:3000 WEBAUTHN_RP_ID=localhost WEBAUTHN_RP_ORIGINS=http://localhost:3000
 ```
 
 Other operator commands:
@@ -71,13 +71,26 @@ Other operator commands:
 
 | Topic | Behavior |
 |---|---|
-| Before the second factor | A password-only session lasts 10 minutes and reaches only `login/totp`, `login/recovery-code` and the two enrollment operations. Everything else answers 401 |
+| Before the second factor | A password-only session lasts 10 minutes and reaches only `login/totp`, `login/recovery-code`, the two `login/passkey` operations and the two enrollment operations. Everything else answers 401 |
 | Password lockout | 5 consecutive wrong passwords for one email from one client IP lock that pair for 1 minute, doubling up to 1 hour. Other addresses are unaffected, so nobody without the password can lock the owner out. A correct password clears the pair. Counters live in memory, so a restart forgets them |
-| Second-factor lockout | 5 consecutive failures of TOTP, a recovery code or enrollment, all behind the password, lock the account from any IP for 1 minute, doubling up to 1 hour. The count persists in the database and clears only when a second factor succeeds |
+| Second-factor lockout | 5 consecutive failures of TOTP, a recovery code, a passkey assertion or enrollment, all behind the password, lock the account from any IP for 1 minute, doubling up to 1 hour. The count persists in the database and clears only when a second factor succeeds |
 | Rate limits (in memory) | Per client IP: burst of 20, one more every 6 s, on routes that check a credential. `GET /auth/csrf` has its own bucket: burst of 60, one more per second. Per account, only on steps behind the password: burst of 10, one more every 30 s |
 | Unknown emails | Same code path as a real account: same dummy-hash cost, same 401, same lockout, same 429 |
 | Client IP | The TCP peer by default, ignoring `X-Forwarded-For`. Behind the BFF that makes the per-IP limit one shared bucket, so set `TRUSTED_PROXIES` to the BFF's address, locally too. A listed peer's header is read from the right, and the first untrusted address is the client. Limits and password lockout key an IPv6 client by its /64 and an IPv4-mapped address as IPv4 |
 | `Origin` | A mutating request carrying an `Origin` not in `ALLOWED_ORIGINS` gets a 403, so an empty list rejects them all. No `Origin` leaves the decision to the CSRF token |
+
+## Passkeys and sessions
+
+| Topic | Behavior |
+|---|---|
+| Role | A passkey is an alternative to TOTP in the second-factor step, after the password. `nextStep` answers `passkey` when the owner has one, and TOTP and recovery codes keep working. There is no passwordless login |
+| Registering and removing | Both need a full session and a current `SecondFactorProof`, TOTP or recovery code, so a stolen session cannot silently add or remove a credential. The proof is spent in the transaction that does the work. Renaming and listing need the full session only |
+| Challenges | Random, in `passkey_challenges`, one per session and purpose, single use and valid for 2 minutes. A registration challenge exists only once a proof was spent, so holding one is what shows the proof. Reading one deletes it, so a rejected response needs a new one |
+| Checks | Origin, RP ID, challenge, signature and user verification, by `go-webauthn`, with no attestation requested. A rejected assertion is the generic 401 and counts toward the second-factor lockout. A success promotes and rotates the session as TOTP does |
+| Sign count | One that does not grow is refused and recorded as `mfa_passkey_sign_count_regressed`, unless the authenticator keeps none and it stays at 0 |
+| Stored | Credential ID, public key, transports, sign count, backup flags, name and last use. Credential IDs and public keys are never returned or logged |
+| Library boundary | Only `internal/auth/adapters/passkey` imports `go-webauthn`. The rest sees the `PasskeyVerifier` port, and its options, responses and state as opaque bytes |
+| Sessions list | `GET /auth/sessions` lists sessions neither revoked nor expired, with the user agent and address of the request that started them. A session awaiting its second factor appears with `mfaPending`, since it means someone passed the password step. Token hashes are never selected. Revoking the current one also clears its cookie |
 
 ## Period behavior worth knowing
 
@@ -200,6 +213,8 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `TOTP_ENC_KEY_PREVIOUS` | empty | Server, `cmd/admin`; only while rotating |
 | `TRUSTED_PROXIES` | empty, `X-Forwarded-For` ignored | Server; comma-separated CIDRs |
 | `ALLOWED_ORIGINS` | empty, any `Origin` rejected | Server; comma-separated exact origins |
+| `WEBAUTHN_RP_ID` | none, required | Server; the host name passkeys are bound to. Local: `localhost`. Changing it orphans every registered passkey, which leaves TOTP and recovery codes |
+| `WEBAUTHN_RP_ORIGINS` | none, required | Server; comma-separated exact origins passkeys may be used from, each the RP ID or a subdomain of it, and `https` unless the host is `localhost`. Local: `http://localhost:3000`. The server refuses to start if they are inconsistent |
 | `INSECURE_DEV_COOKIES` | `false` | Server; local development only. Drops `Secure` and the `__Host-` prefix, and logs a warning. The server refuses to start if `ALLOWED_ORIGINS` has an origin whose host is not `localhost`, `127.0.0.1` or `[::1]` |
 
 ## Layout
@@ -220,7 +235,7 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `internal/cards` | Credit cards and a month's per-card totals (D3): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/platforms` | People, platforms, memberships and payments (D4, D8, D10), reached by `periods` and `expenses` only through application ports wired in `cmd/server`: `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/dashboard` | The KPIs (D1, D2, D3, D7, D9) and the one read that gathers every section, in its own types, reading other modules only through application ports wired in `cmd/server`: `domain`, `application` and `adapters/http` |
-| `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory}` |
+| `internal/auth` | Auth module: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres,crypto,memory,passkey}` |
 | `internal/shared/platform` | Config, logging, the system clock, HTTP server, database pool, middleware, cookies, CSRF, rate limiting, problem responses |
 | `internal/decisions` | Pending tests for decisions D1-D11, each naming its phase |
 | `infra` | Local Postgres compose file |

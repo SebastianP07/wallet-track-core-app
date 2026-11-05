@@ -51,6 +51,40 @@ type PasswordAttempts interface {
 	Clear(email string, ip netip.Addr)
 }
 
+// PasskeyVerifier runs the WebAuthn ceremonies. Options and responses are JSON the browser reads
+// and writes, and state is whatever the verifier needs back at the end of a ceremony: none of it
+// means anything to the use cases.
+type PasskeyVerifier interface {
+	BeginLogin(user domain.User, passkeys []domain.Passkey) (PasskeyCeremony, error)
+	// FinishLogin returns domain.ErrInvalidCredentials if the assertion is rejected. A sign count
+	// that went backwards is not one of those: it is reported in the result, for the audit log.
+	FinishLogin(user domain.User, passkeys []domain.Passkey, state, response []byte) (PasskeyAssertion, error)
+	BeginRegistration(user domain.User, passkeys []domain.Passkey) (PasskeyCeremony, error)
+	// FinishRegistration returns domain.ErrInvalidCredentials if the attestation is rejected.
+	FinishRegistration(user domain.User, state, response []byte) (NewPasskeyCredential, error)
+}
+
+type PasskeyCeremony struct {
+	Options []byte
+	State   []byte
+}
+
+type PasskeyAssertion struct {
+	PasskeyID          string
+	SignCount          uint32
+	BackupState        bool
+	SignCountRegressed bool
+}
+
+type NewPasskeyCredential struct {
+	CredentialID   []byte
+	PublicKey      []byte
+	Transports     []string
+	SignCount      uint32
+	BackupEligible bool
+	BackupState    bool
+}
+
 type TxManager interface {
 	WithinTx(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
 }
@@ -82,13 +116,40 @@ type Repository interface {
 	TouchSession(ctx context.Context, sessionID string, now time.Time) error
 	RevokeSession(ctx context.Context, sessionID string, now time.Time) error
 	RevokeUserSessions(ctx context.Context, userID string, now time.Time) error
+	ListActiveSessions(ctx context.Context, userID string, now time.Time) ([]domain.ActiveSession, error)
+	// RevokeOwnedSession returns false if the user has no such active session.
+	RevokeOwnedSession(ctx context.Context, userID, sessionID string, now time.Time) (bool, error)
 
 	ReplaceRecoveryCodes(ctx context.Context, userID string, codeHashes []string) error
 	// ConsumeRecoveryCode returns false if the code does not exist or was already used.
 	ConsumeRecoveryCode(ctx context.Context, userID, codeHash string, now time.Time) (bool, error)
 	CountUnusedRecoveryCodes(ctx context.Context, userID string) (int64, error)
 
+	CountPasskeys(ctx context.Context, userID string) (int64, error)
+	ListPasskeys(ctx context.Context, userID string) ([]domain.Passkey, error)
+	// CreatePasskey returns domain.ErrPasskeyExists if that credential is already registered.
+	CreatePasskey(ctx context.Context, userID, name string, credential NewPasskeyCredential) (domain.Passkey, error)
+	// RenamePasskey returns domain.ErrNotFound if the user has no such passkey.
+	RenamePasskey(ctx context.Context, userID, passkeyID, name string) (domain.Passkey, error)
+	// DeletePasskey returns false if the user has no such passkey.
+	DeletePasskey(ctx context.Context, userID, passkeyID string) (bool, error)
+	// RecordPasskeyUse returns false if the passkey is gone or its counter did not grow.
+	RecordPasskeyUse(ctx context.Context, userID string, assertion PasskeyAssertion, now time.Time) (bool, error)
+	// PutPasskeyChallenge replaces any challenge the session has for that purpose.
+	PutPasskeyChallenge(ctx context.Context, challenge PasskeyChallenge) error
+	// ConsumePasskeyChallenge deletes the session's challenge in the one statement that reads it, so
+	// it can be used once whatever happens next. It returns false if there is none, or it has expired.
+	ConsumePasskeyChallenge(ctx context.Context, sessionID string, purpose domain.ChallengePurpose, now time.Time) ([]byte, bool, error)
+	DeleteExpiredPasskeyChallenges(ctx context.Context, now time.Time) error
+
 	RecordEvent(ctx context.Context, event domain.Event) error
+}
+
+type PasskeyChallenge struct {
+	SessionID string
+	Purpose   domain.ChallengePurpose
+	State     []byte
+	ExpiresAt time.Time
 }
 
 type NewUser struct {
@@ -133,4 +194,5 @@ type Deps struct {
 	Tokens   TokenGenerator
 	Cipher   SecretCipher
 	Attempts PasswordAttempts
+	Passkeys PasskeyVerifier
 }

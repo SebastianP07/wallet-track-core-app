@@ -22,6 +22,7 @@ import (
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/crypto"
 	authhttp "github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/http"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/memory"
+	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/passkey"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/adapters/postgres"
 	"github.com/SebastianP07/wallet-track-core-app/internal/auth/application"
 	cardshttp "github.com/SebastianP07/wallet-track-core-app/internal/cards/adapters/http"
@@ -73,6 +74,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	webAuthnCfg, err := platform.LoadWebAuthnConfig(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	logger := platform.NewLogger(os.Stdout, cfg.LogLevel)
 	if edgeCfg.InsecureDevCookies {
 		if err := requireLocalOrigins(edgeCfg.AllowedOrigins); err != nil {
@@ -90,7 +95,7 @@ func run() error {
 	}
 	defer pool.Close()
 
-	authHandler, err := newAuthHandler(pool, appCfg, edgeCfg, logger)
+	authHandler, err := newAuthHandler(pool, appCfg, edgeCfg, webAuthnCfg, logger)
 	if err != nil {
 		return err
 	}
@@ -140,10 +145,14 @@ func isLocalHost(host string) bool {
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
-func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platform.EdgeConfig, logger *slog.Logger) (*authhttp.Handler, error) {
+func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platform.EdgeConfig, webAuthnCfg platform.WebAuthnConfig, logger *slog.Logger) (*authhttp.Handler, error) {
 	keyring, err := crypto.NewKeyring(appCfg.TOTPKey, appCfg.PreviousTOTPKey)
 	if err != nil {
 		return nil, fmt.Errorf("load TOTP keys: %w", err)
+	}
+	passkeys, err := passkey.NewVerifier(webAuthnCfg.RPID, webAuthnCfg.RPOrigins, logger)
+	if err != nil {
+		return nil, err
 	}
 	deps := application.Deps{
 		Repo:     postgres.NewRepository(pool),
@@ -154,6 +163,7 @@ func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platf
 		Tokens:   crypto.Tokens{},
 		Cipher:   keyring,
 		Attempts: memory.NewPasswordAttempts(),
+		Passkeys: passkeys,
 	}
 	loginPassword, err := application.NewLoginWithPassword(deps)
 	if err != nil {
@@ -173,6 +183,15 @@ func newAuthHandler(pool *pgxpool.Pool, appCfg platform.AppConfig, edgeCfg platf
 			RegenerateCodes: application.NewRegenerateRecoveryCodes(deps),
 			Logout:          application.NewLogout(deps),
 			LogoutAll:       application.NewLogoutAll(deps),
+			ListSessions:    application.NewListSessions(deps),
+			RevokeSession:   application.NewRevokeSession(deps),
+			StartPasskey:    application.NewStartPasskeyLogin(deps),
+			LoginPasskey:    application.NewLoginWithPasskey(deps),
+			StartRegister:   application.NewStartPasskeyRegistration(deps),
+			FinishRegister:  application.NewFinishPasskeyRegistration(deps),
+			ListPasskeys:    application.NewListPasskeys(deps),
+			RenamePasskey:   application.NewRenamePasskey(deps),
+			RemovePasskey:   application.NewRemovePasskey(deps),
 		},
 		Limits: authhttp.Limits{
 			CredentialsByIP: platform.NewTokenBucket(credentialsBurstPerIP, credentialsRefillPerIP),

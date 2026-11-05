@@ -21,7 +21,10 @@ const (
 	genericUnauthorized = "Authentication failed."
 )
 
-var totpCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
+var (
+	totpCodePattern = regexp.MustCompile(`^[0-9]{6}$`)
+	uuidPattern     = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
 
 // UseCases are the operations this adapter exposes.
 type UseCases struct {
@@ -35,6 +38,15 @@ type UseCases struct {
 	RegenerateCodes *application.RegenerateRecoveryCodes
 	Logout          *application.Logout
 	LogoutAll       *application.LogoutAll
+	ListSessions    *application.ListSessions
+	RevokeSession   *application.RevokeSession
+	StartPasskey    *application.StartPasskeyLogin
+	LoginPasskey    *application.LoginWithPasskey
+	StartRegister   *application.StartPasskeyRegistration
+	FinishRegister  *application.FinishPasskeyRegistration
+	ListPasskeys    *application.ListPasskeys
+	RenamePasskey   *application.RenamePasskey
+	RemovePasskey   *application.RemovePasskey
 }
 
 // Limits are the rate limiters of the auth routes.
@@ -79,12 +91,21 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	route("POST "+basePath+"/auth/login/totp", h.loginWithTOTP, limited, h.CSRF.Protect, h.requirePendingSession)
 	route("POST "+basePath+"/auth/login/recovery-code", h.loginWithRecoveryCode, limited, h.CSRF.Protect, h.requirePendingSession)
 	// Enrollment accepts any session so that a full one gets the contract's 409, not a 401.
+	route("POST "+basePath+"/auth/login/passkey/options", h.startPasskeyLogin, limited, h.CSRF.Protect, h.requirePendingSession)
+	route("POST "+basePath+"/auth/login/passkey", h.loginWithPasskey, limited, h.CSRF.Protect, h.requirePendingSession)
 	route("POST "+basePath+"/auth/mfa/enrollment", h.startMFAEnrollment, limited, h.CSRF.Protect, h.requireAnySession)
 	route("POST "+basePath+"/auth/mfa/enrollment/confirm", h.confirmMFAEnrollment, limited, h.CSRF.Protect, h.requireAnySession)
 	route("GET "+basePath+"/auth/recovery-codes", h.getRecoveryCodeStatus, h.RequireFullSession)
 	route("POST "+basePath+"/auth/recovery-codes/regenerate", h.regenerateRecoveryCodes, limited, h.CSRF.Protect, h.RequireFullSession)
 	route("POST "+basePath+"/auth/logout", h.logout, h.CSRF.Protect, h.RequireFullSession)
 	route("POST "+basePath+"/auth/logout-all", h.logoutAll, h.CSRF.Protect, h.RequireFullSession)
+	route("GET "+basePath+"/auth/sessions", h.listSessions, h.RequireFullSession)
+	route("DELETE "+basePath+"/auth/sessions/{id}", h.revokeSession, h.CSRF.Protect, h.RequireFullSession)
+	route("GET "+basePath+"/auth/passkeys", h.listPasskeys, h.RequireFullSession)
+	route("POST "+basePath+"/auth/passkeys/registration/options", h.startPasskeyRegistration, limited, h.CSRF.Protect, h.RequireFullSession)
+	route("POST "+basePath+"/auth/passkeys/registration", h.finishPasskeyRegistration, limited, h.CSRF.Protect, h.RequireFullSession)
+	route("PATCH "+basePath+"/auth/passkeys/{id}", h.renamePasskey, h.CSRF.Protect, h.RequireFullSession)
+	route("POST "+basePath+"/auth/passkeys/{id}/remove", h.removePasskey, limited, h.CSRF.Protect, h.RequireFullSession)
 	route("GET "+basePath+"/me", h.getMe, h.RequireFullSession)
 	mux.HandleFunc(basePath+"/", func(w http.ResponseWriter, _ *http.Request) {
 		platform.WriteProblem(w, http.StatusNotFound, "No such resource.")
@@ -156,6 +177,12 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		platform.WriteTooManyRequests(w, locked.RetryAfter)
 	case errors.Is(err, domain.ErrMFAAlreadyEnabled):
 		platform.WriteProblem(w, http.StatusConflict, "MFA is already enabled.")
+	case errors.Is(err, domain.ErrNoPasskeys):
+		platform.WriteProblem(w, http.StatusConflict, "No passkey is registered.")
+	case errors.Is(err, domain.ErrPasskeyExists):
+		platform.WriteProblem(w, http.StatusConflict, "That passkey is already registered.")
+	case errors.Is(err, domain.ErrNotFound):
+		platform.WriteProblem(w, http.StatusNotFound, "No such resource.")
 	default:
 		h.Logger.LogAttrs(r.Context(), slog.LevelError, "auth request failed",
 			slog.String("error", err.Error()),

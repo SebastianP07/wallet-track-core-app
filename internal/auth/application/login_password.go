@@ -11,6 +11,7 @@ import (
 type NextStep string
 
 const (
+	NextStepPasskey   NextStep = "passkey"
 	NextStepTOTP      NextStep = "totp"
 	NextStepEnrollMFA NextStep = "enroll_mfa"
 )
@@ -92,12 +93,26 @@ func (uc *LoginWithPassword) startPendingSession(ctx context.Context, user domai
 		return PasswordLoginResult{}, fmt.Errorf("create session: %w", err)
 	}
 
-	next := NextStepEnrollMFA
-	if user.MFAEnabled {
-		next = NextStepTOTP
+	next, err := uc.nextStep(ctx, user)
+	if err != nil {
+		return PasswordLoginResult{}, err
 	}
 	return PasswordLoginResult{
 		NextStep: next,
 		Session:  IssuedSession{Token: token, Lifetime: domain.PendingSessionLifetime},
 	}, nil
+}
+
+func (uc *LoginWithPassword) nextStep(ctx context.Context, user domain.User) (NextStep, error) {
+	if !user.MFAEnabled {
+		return NextStepEnrollMFA, nil
+	}
+	passkeys, err := uc.deps.Repo.CountPasskeys(ctx, user.ID)
+	if err != nil {
+		return "", fmt.Errorf("count passkeys: %w", err)
+	}
+	if passkeys > 0 {
+		return NextStepPasskey, nil
+	}
+	return NextStepTOTP, nil
 }

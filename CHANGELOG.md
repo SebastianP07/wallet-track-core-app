@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.14.0 — 2026-11-05 — Passkeys and active sessions
+
+- Passkeys in `internal/auth`, with `github.com/go-webauthn/webauthn` v0.18.2 confined to `adapters/passkey` behind the
+  `PasskeyVerifier` port. New operations: `POST /auth/login/passkey/options`, `POST /auth/login/passkey`, `GET /auth/passkeys`,
+  `POST /auth/passkeys/registration/options`, `POST /auth/passkeys/registration`, `PATCH /auth/passkeys/{id}` and
+  `POST /auth/passkeys/{id}/remove`. `LoginStep.nextStep` gains `passkey`, answered when the owner has one.
+- A passkey is an alternative to TOTP in the second-factor step, never a way around the password. TOTP and recovery codes keep
+  working with a passkey present and after the last one goes.
+- Registering and removing need a full session and a fresh `SecondFactorProof`, TOTP or recovery code, spent in the transaction
+  that stores the challenge or deletes the passkey. A rejected proof counts toward the second-factor lockout, and a 404 leaves
+  the code unspent. Removing takes a `POST` because the proof travels in the body.
+- Migration 00008 adds `passkey_challenges`, one per session and purpose, holding the library's state and an expiry of 2 minutes.
+  `DELETE ... RETURNING` reads and consumes it in one statement, so it works once whatever happens next and a replay finds nothing.
+- Migration 00008 adds `passkeys` with only what an assertion needs: credential ID, public key, transports, sign count and
+  backup flags. No attestation statement or AAGUID, since the options ask for no attestation.
+- Every ceremony requires user verification, and the library checks origin, RP ID, challenge and signature. A rejected assertion
+  is the generic 401 and counts toward the lockout. A sign count that does not grow is refused with
+  `mfa_passkey_sign_count_regressed`, and the update repeats that check, so two assertions racing with one count cannot both pass.
+- New audit events: `login_succeeded_passkey`, `mfa_passkey_failed`, `mfa_passkey_sign_count_regressed`, `passkey_registered`,
+  `passkey_registration_failed` and `passkey_removed`. Rejections log the library's fixed wording, never its debug detail or a
+  credential ID.
+- `GET /auth/sessions` and `DELETE /auth/sessions/{id}`. The list selects no token hash. Sessions awaiting their second factor
+  appear with `mfaPending`. Revoking the current one also clears its cookie.
+- `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGINS` are required: the server refuses to start without them, with an IP address or scheme
+  as RP ID, with an origin outside the RP ID, or with plain `http` anywhere but `localhost`.
+- No new automated tests (T7).
+
 ## 0.13.0 — 2026-11-05 — Dashboard
 
 - Added `internal/dashboard` and `GET /api/v1/dashboard?period=`, with a full session: KPIs, the to-pay breakdown, the upcoming

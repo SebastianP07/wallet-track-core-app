@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"net/netip"
+	"time"
+)
 
 const (
 	SessionIdleTimeout     = 7 * 24 * time.Hour
@@ -29,4 +32,14 @@ func (s Session) ValidAt(now time.Time) bool {
 		return false
 	}
 	return !s.FullyAuthenticated() || now.Sub(s.LastSeenAt) < SessionIdleTimeout
+}
+
+// ActiveSession describes a session to its owner. It has no token, and no hash of one.
+type ActiveSession struct {
+	ID         string
+	UserAgent  string
+	IP         netip.Addr
+	Pending    bool
+	CreatedAt  time.Time
+	LastSeenAt time.Time
 }

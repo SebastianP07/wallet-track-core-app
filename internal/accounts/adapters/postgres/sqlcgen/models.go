@@ -39,6 +39,31 @@ type CreditCard struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type Passkey struct {
+	ID             pgtype.UUID
+	UserID         pgtype.UUID
+	Name           string
+	CredentialID   []byte
+	PublicKey      []byte
+	Transports     []string
+	SignCount      int64
+	BackupEligible bool
+	BackupState    bool
+	LastUsedAt     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type PasskeyChallenge struct {
+	ID            pgtype.UUID
+	SessionID     pgtype.UUID
+	Purpose       string
+	CeremonyState []byte
+	ExpiresAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type Period struct {
 	ID        pgtype.UUID
 	Year      int32

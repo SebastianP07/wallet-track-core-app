@@ -15,6 +15,10 @@ var (
 	ErrNotFound           = errors.New("not found")
 	ErrInvalidEmail       = errors.New("email is not valid")
 	ErrPasswordPolicy     = fmt.Errorf("password must have between %d and %d characters", PasswordMinLength, PasswordMaxLength)
+	// ErrNoPasskeys means the login has to use another factor.
+	ErrNoPasskeys         = errors.New("no passkey is registered")
+	ErrPasskeyExists      = errors.New("passkey is already registered")
+	ErrInvalidPasskeyName = errors.New("passkey name is not valid")
 )
 
 type LockedError struct {

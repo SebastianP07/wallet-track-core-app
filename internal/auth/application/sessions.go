@@ -81,3 +81,48 @@ func (uc *LogoutAll) Execute(ctx context.Context, principal Principal, client do
 	}
 	return nil
 }
+
+type ListSessions struct {
+	deps Deps
+}
+
+func NewListSessions(deps Deps) *ListSessions {
+	return &ListSessions{deps: deps}
+}
+
+func (uc *ListSessions) Execute(ctx context.Context, userID string) ([]domain.ActiveSession, error) {
+	sessions, err := uc.deps.Repo.ListActiveSessions(ctx, userID, uc.deps.Clock.Now())
+	if err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	return sessions, nil
+}
+
+type RevokeSession struct {
+	deps Deps
+}
+
+func NewRevokeSession(deps Deps) *RevokeSession {
+	return &RevokeSession{deps: deps}
+}
+
+// Execute returns domain.ErrNotFound unless the session is the owner's and still active.
+func (uc *RevokeSession) Execute(ctx context.Context, principal Principal, sessionID string, client domain.ClientInfo) error {
+	err := uc.deps.Tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
+		revoked, err := repo.RevokeOwnedSession(ctx, principal.User.ID, sessionID, uc.deps.Clock.Now())
+		if err != nil {
+			return err
+		}
+		if !revoked {
+			return domain.ErrNotFound
+		}
+		return repo.RecordEvent(ctx, domain.Event{UserID: principal.User.ID, Type: domain.EventSessionRevoked, Client: client})
+	})
+	if errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("revoke session: %w", err)
+	}
+	return nil
+}

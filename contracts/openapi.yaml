@@ -22,7 +22,7 @@ security:
 - sessionCookie: []
 tags:
 - name: Auth
-  description: Password, TOTP, MFA enrollment, recovery codes and sessions.
+  description: Password, TOTP, passkeys, MFA enrollment, recovery codes and sessions.
 - name: Accounts
   description: Where money sits, including savings (D6, D9).
 - name: Periods
@@ -149,6 +149,67 @@ paths:
       responses:
         '200':
           description: Code accepted and consumed. The session is rotated and fully authenticated.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/login/passkey/options:
+    post:
+      operationId: startPasskeyLogin
+      summary: 'Login step 2: start a passkey assertion'
+      tags:
+      - Auth
+      description: Requires the session from step 1. Stores a random challenge bound to that session, which
+        works once and expires in 2 minutes, replacing any earlier one. 409 if the owner has no passkey,
+        so the login falls back to TOTP. 429 while the second factor is locked.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: Options for `navigator.credentials.get()`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyAssertionOptions'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/login/passkey:
+    post:
+      operationId: loginWithPasskey
+      summary: 'Login step 2: passkey assertion'
+      tags:
+      - Auth
+      description: Requires the session from step 1. Consumes the session's challenge whatever the outcome,
+        then checks origin, RP ID, challenge, signature, user verification and sign count. A rejected
+        assertion is the generic 401 and counts toward the second-factor lockout.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyAssertionRequest'
+      responses:
+        '200':
+          description: Assertion accepted. The session is rotated and fully authenticated.
           headers:
             Set-Cookie:
               $ref: '#/components/headers/SetSessionCookie'
@@ -316,6 +377,192 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+  /auth/sessions:
+    get:
+      operationId: listSessions
+      summary: List the owner's active sessions
+      tags:
+      - Auth
+      description: Sessions neither revoked nor expired, most recently seen first. A session still waiting
+        for its second factor is listed with `mfaPending`, because it means someone passed the password
+        step. Token hashes never leave the server.
+      responses:
+        '200':
+          description: The active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/sessions/{id}:
+    delete:
+      operationId: revokeSession
+      summary: Revoke a session
+      tags:
+      - Auth
+      description: Ends that session at once. Revoking the current session also clears its cookie, like
+        logging out.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204':
+          description: Session revoked.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /auth/passkeys:
+    get:
+      operationId: listPasskeys
+      summary: List the owner's passkeys
+      tags:
+      - Auth
+      description: Oldest first. Credential IDs and public keys never leave the server.
+      responses:
+        '200':
+          description: The registered passkeys.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/passkeys/registration/options:
+    post:
+      operationId: startPasskeyRegistration
+      summary: Start registering a passkey
+      tags:
+      - Auth
+      description: Requires a full session and a current second-factor proof, so a stolen session cannot
+        silently add a credential. The proof is consumed here, and only then is a challenge stored, bound
+        to this session, working once and expiring in 2 minutes. A rejected proof is the generic 401 and
+        counts toward the second-factor lockout.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorProof'
+      responses:
+        '200':
+          description: Options for `navigator.credentials.create()`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PasskeyCreationOptions'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/passkeys/registration:
+    post:
+      operationId: finishPasskeyRegistration
+      summary: Finish registering a passkey
+      tags:
+      - Auth
+      description: Consumes the session's registration challenge whatever the outcome, then checks origin,
+        RP ID, challenge and user verification. A missing, used, expired or foreign challenge and a
+        rejected attestation are the generic 401. 409 if that credential is already registered.
+      parameters:
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRegistrationRequest'
+      responses:
+        '201':
+          description: Passkey registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Passkey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /auth/passkeys/{id}:
+    patch:
+      operationId: renamePasskey
+      summary: Rename a passkey
+      tags:
+      - Auth
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasskeyRename'
+      responses:
+        '200':
+          description: Passkey renamed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Passkey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /auth/passkeys/{id}/remove:
+    post:
+      operationId: removePasskey
+      summary: Remove a passkey
+      tags:
+      - Auth
+      description: Requires a current second-factor proof, sent in the body, which is why this is not a
+        DELETE. The proof is consumed only if the passkey existed. A rejected proof is the generic 401 and
+        counts toward the second-factor lockout. TOTP and recovery codes keep working after the last
+        passkey goes.
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecondFactorProof'
+      responses:
+        '204':
+          description: Passkey removed.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /me:
     get:
       operationId: getMe
@@ -1712,9 +1959,11 @@ components:
         nextStep:
           type: string
           enum:
+          - passkey
           - totp
           - enroll_mfa
-          description: '`enroll_mfa` on first login, when MFA is not set up yet.'
+          description: '`enroll_mfa` on first login, when MFA is not set up yet. `passkey` when the owner
+            has one: it is the preferred factor, and TOTP and recovery codes still work.'
       additionalProperties: false
     TotpCodeRequest:
       type: object
@@ -1810,6 +2059,290 @@ components:
           type: integer
           minimum: 0
           maximum: 10
+      additionalProperties: false
+    SecondFactorProof:
+      type: object
+      description: A current second factor. `code` is 6 digits for `totp` and up to 64 characters for
+        `recovery_code`. Using it consumes it.
+      required:
+      - method
+      - code
+      properties:
+        method:
+          type: string
+          enum:
+          - totp
+          - recovery_code
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+      additionalProperties: false
+    PasskeyDescriptor:
+      type: object
+      required:
+      - type
+      - id
+      properties:
+        type:
+          type: string
+          const: public-key
+        id:
+          type: string
+          description: Credential ID, base64url.
+        transports:
+          type: array
+          items:
+            type: string
+    PasskeyCreationOptions:
+      type: object
+      description: WebAuthn creation options in their JSON form, as `parseCreationOptionsFromJSON` takes them.
+      required:
+      - publicKey
+      properties:
+        publicKey:
+          type: object
+          required:
+          - rp
+          - user
+          - challenge
+          - pubKeyCredParams
+          properties:
+            rp:
+              type: object
+              required:
+              - id
+              - name
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+            user:
+              type: object
+              required:
+              - id
+              - name
+              - displayName
+              properties:
+                id:
+                  type: string
+                  description: User handle, base64url.
+                name:
+                  type: string
+                displayName:
+                  type: string
+            challenge:
+              type: string
+              description: Base64url.
+            pubKeyCredParams:
+              type: array
+              items:
+                type: object
+                required:
+                - type
+                - alg
+                properties:
+                  type:
+                    type: string
+                    const: public-key
+                  alg:
+                    type: integer
+            timeout:
+              type: integer
+              minimum: 0
+              description: Milliseconds.
+            excludeCredentials:
+              type: array
+              items:
+                $ref: '#/components/schemas/PasskeyDescriptor'
+            authenticatorSelection:
+              type: object
+              properties:
+                authenticatorAttachment:
+                  type: string
+                requireResidentKey:
+                  type: boolean
+                residentKey:
+                  type: string
+                userVerification:
+                  type: string
+            attestation:
+              type: string
+    PasskeyAssertionOptions:
+      type: object
+      description: WebAuthn request options in their JSON form, as `parseRequestOptionsFromJSON` takes them.
+      required:
+      - publicKey
+      properties:
+        publicKey:
+          type: object
+          required:
+          - challenge
+          properties:
+            challenge:
+              type: string
+              description: Base64url.
+            timeout:
+              type: integer
+              minimum: 0
+              description: Milliseconds.
+            rpId:
+              type: string
+            allowCredentials:
+              type: array
+              items:
+                $ref: '#/components/schemas/PasskeyDescriptor'
+            userVerification:
+              type: string
+    PasskeyCredentialResponse:
+      type: object
+      description: A `PublicKeyCredential` in its JSON form. Binary values are base64url. Verified by the
+        server, so its shape is checked there.
+      required:
+      - id
+      - rawId
+      - type
+      - response
+      properties:
+        id:
+          type: string
+        rawId:
+          type: string
+        type:
+          type: string
+          const: public-key
+        authenticatorAttachment:
+          type: string
+        clientExtensionResults:
+          type: object
+          additionalProperties: true
+        response:
+          type: object
+          required:
+          - clientDataJSON
+          properties:
+            clientDataJSON:
+              type: string
+            attestationObject:
+              type: string
+              description: Registration only.
+            transports:
+              type: array
+              items:
+                type: string
+              description: Registration only.
+            authenticatorData:
+              type: string
+              description: Assertion only.
+            signature:
+              type: string
+              description: Assertion only.
+            userHandle:
+              type:
+              - string
+              - 'null'
+              description: Assertion only.
+    PasskeyAssertionRequest:
+      type: object
+      required:
+      - credential
+      properties:
+        credential:
+          $ref: '#/components/schemas/PasskeyCredentialResponse'
+      additionalProperties: false
+    PasskeyRegistrationRequest:
+      type: object
+      required:
+      - name
+      - credential
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        credential:
+          $ref: '#/components/schemas/PasskeyCredentialResponse'
+      additionalProperties: false
+    PasskeyRename:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+      additionalProperties: false
+    Passkey:
+      type: object
+      required:
+      - id
+      - name
+      - createdAt
+      - lastUsedAt
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        name:
+          $ref: '#/components/schemas/Name'
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        lastUsedAt:
+          oneOf:
+          - $ref: '#/components/schemas/Timestamp'
+          - type: 'null'
+          description: Null until it first completes a login.
+      additionalProperties: false
+    PasskeyList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Passkey'
+      additionalProperties: false
+    Session:
+      type: object
+      required:
+      - id
+      - userAgent
+      - ip
+      - createdAt
+      - lastSeenAt
+      - current
+      - mfaPending
+      properties:
+        id:
+          $ref: '#/components/schemas/Id'
+        userAgent:
+          type:
+          - string
+          - 'null'
+          description: Of the request that started the session.
+        ip:
+          type:
+          - string
+          - 'null'
+          description: Client address of the request that started the session.
+        createdAt:
+          $ref: '#/components/schemas/Timestamp'
+        lastSeenAt:
+          $ref: '#/components/schemas/Timestamp'
+        current:
+          type: boolean
+          description: Whether this is the session making the request.
+        mfaPending:
+          type: boolean
+          description: The password was accepted and the second factor has not been passed yet.
+      additionalProperties: false
+    SessionList:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'
       additionalProperties: false
     AccountKind:
       type: string

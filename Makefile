@@ -26,6 +26,8 @@ dev: export SHUTDOWN_TIMEOUT := $(SHUTDOWN_TIMEOUT)
 dev: export TRUSTED_PROXIES := $(TRUSTED_PROXIES)
 dev: export ALLOWED_ORIGINS := $(ALLOWED_ORIGINS)
 dev: export INSECURE_DEV_COOKIES := $(INSECURE_DEV_COOKIES)
+dev: export WEBAUTHN_RP_ID := $(WEBAUTHN_RP_ID)
+dev: export WEBAUTHN_RP_ORIGINS := $(WEBAUTHN_RP_ORIGINS)
 
 # The only recipes that receive the application secrets.
 dev admin: export DATABASE_URL := $(DATABASE_URL)

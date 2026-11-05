@@ -92,3 +92,60 @@ SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL;
 
 -- name: InsertAuthEvent :exec
 INSERT INTO auth_events (user_id, event_type, user_agent, ip) VALUES ($1, $2, $3, $4);
+
+-- name: ListActiveSessions :many
+SELECT id, user_agent, ip, mfa_verified_at, last_seen_at, created_at
+FROM sessions
+WHERE user_id = sqlc.arg(user_id)
+  AND revoked_at IS NULL
+  AND expires_at > sqlc.arg(now)
+  AND (mfa_verified_at IS NULL OR last_seen_at > sqlc.arg(idle_cutoff))
+ORDER BY last_seen_at DESC, id;
+
+-- name: RevokeOwnedSession :execrows
+UPDATE sessions SET revoked_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id)
+  AND user_id = sqlc.arg(user_id)
+  AND revoked_at IS NULL
+  AND expires_at > sqlc.arg(now);
+
+-- name: CountPasskeys :one
+SELECT count(*) FROM passkeys WHERE user_id = $1;
+
+-- name: ListPasskeys :many
+SELECT * FROM passkeys WHERE user_id = $1 ORDER BY created_at, id;
+
+-- name: InsertPasskey :one
+INSERT INTO passkeys (user_id, name, credential_id, public_key, transports, sign_count, backup_eligible, backup_state)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (credential_id) DO NOTHING
+RETURNING *;
+
+-- name: RenamePasskey :one
+UPDATE passkeys SET name = $3 WHERE id = $1 AND user_id = $2 RETURNING *;
+
+-- name: DeletePasskey :execrows
+DELETE FROM passkeys WHERE id = $1 AND user_id = $2;
+
+-- A counter must grow, unless the authenticator keeps none and it stays at zero. Checking here too
+-- means two assertions racing with one count cannot both pass.
+-- name: RecordPasskeyUse :execrows
+UPDATE passkeys
+SET sign_count = sqlc.arg(new_count), backup_state = sqlc.arg(backup_state), last_used_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id)
+  AND user_id = sqlc.arg(user_id)
+  AND (sign_count < sqlc.arg(new_count) OR (sign_count = 0 AND sqlc.arg(new_count) = 0));
+
+-- name: PutPasskeyChallenge :exec
+INSERT INTO passkey_challenges (session_id, purpose, ceremony_state, expires_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (session_id, purpose)
+DO UPDATE SET ceremony_state = EXCLUDED.ceremony_state, expires_at = EXCLUDED.expires_at;
+
+-- name: ConsumePasskeyChallenge :one
+DELETE FROM passkey_challenges
+WHERE session_id = $1 AND purpose = $2
+RETURNING ceremony_state, expires_at;
+
+-- name: DeleteExpiredPasskeyChallenges :exec
+DELETE FROM passkey_challenges WHERE expires_at <= $1;
