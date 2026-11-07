@@ -104,7 +104,10 @@ func NewClosePeriod(tx TxManager) *ClosePeriod {
 	return &ClosePeriod{tx: tx}
 }
 
-// Execute leaves a month that is already closed exactly as it is.
+// Execute leaves a month that is already closed exactly as it is. Otherwise every unpaid fixed and
+// occasional item of the month, and every overdue expense it owed, moves to the Overdue section of the first
+// later month that is not closed, opened or not (D7). One item stays one row: carrying only changes the month
+// that owes it. Unreceived income turns overdue and stays here, and card charges stay as they are (D3).
 func (u *ClosePeriod) Execute(ctx context.Context, month kernel.YearMonth) (domain.Period, error) {
 	var closed domain.Period
 	err := u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
@@ -116,8 +119,26 @@ func (u *ClosePeriod) Execute(ctx context.Context, month kernel.YearMonth) (doma
 			closed = period
 			return nil
 		}
-		if err := repo.MarkPendingItemsOverdue(ctx, period.ID, domain.KindsOverdueOnClose()); err != nil {
-			return fmt.Errorf("mark items overdue: %w", err)
+		// Months lock in ascending order, here and when an undo looks for a month to owe an item, so no
+		// item can land in a month that closed meanwhile.
+		target, err := kernel.FirstMonthNotClosed(month.Next(), func(next kernel.YearMonth) (bool, error) {
+			later, err := repo.LockPeriod(ctx, next)
+			if errors.Is(err, domain.ErrPeriodNotFound) {
+				return false, nil
+			}
+			return later.Status == domain.PeriodClosed, err
+		})
+		if err != nil {
+			return fmt.Errorf("find the month that owes what is unpaid: %w", err)
+		}
+		if err := repo.CarryOwedExpenses(ctx, month, target); err != nil {
+			return fmt.Errorf("carry overdue expenses: %w", err)
+		}
+		if err := repo.CarryPendingExpenses(ctx, period.ID, target); err != nil {
+			return fmt.Errorf("carry unpaid expenses: %w", err)
+		}
+		if err := repo.MarkPendingIncomeOverdue(ctx, period.ID); err != nil {
+			return fmt.Errorf("mark income overdue: %w", err)
 		}
 		closed, err = repo.MarkPeriodClosed(ctx, period.ID)
 		return err

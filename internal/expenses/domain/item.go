@@ -1,5 +1,6 @@
 // Package domain holds the rules of a month's items: urgency (D11), Por pagar and Por llegar (D1), the
-// done toggle (D7) and card charges, which are informational and stay out of both (D3).
+// done toggle and the overdue items a month owes (D7), and card charges, which are informational and stay
+// out of every total (D3).
 package domain
 
 import (
@@ -92,7 +93,8 @@ func ParseItemKind(raw string) (ItemKind, bool) {
 	}
 }
 
-func isExpense(kind ItemKind) bool {
+// IsExpense says whether the kind is a fixed or occasional expense, the only kinds a later month can owe (D7).
+func IsExpense(kind ItemKind) bool {
 	return kind == ItemFixed || kind == ItemOccasional
 }
 
@@ -126,12 +128,15 @@ type Item struct {
 	TagID      *string
 	Status     ItemStatus
 	DoneAt     *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// OwedIn is the month whose Overdue section lists this expense, set once a closed month left it
+	// unpaid (D7). Month stays its month of origin. Once paid it keeps the month that paid it.
+	OwedIn    *kernel.YearMonth
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Done is idempotent: an item already done keeps the moment it was first done. Never touches a
-// balance (D6), and an overdue item stays in its month (D7).
+// balance (D6). An overdue expense keeps OwedIn, so it stays in that month's Se va (D2, D7).
 func (i Item) Done(now time.Time) Item {
 	if i.Status == StatusDone {
 		return i
@@ -142,17 +147,36 @@ func (i Item) Done(now time.Time) Item {
 }
 
 // Undone is idempotent: only a done item changes. In a closed month an expense or income item goes
-// back to overdue, since it is what closing would have made of it; a card charge never is (D3).
-func (i Item) Undone(period Period) Item {
+// back to overdue, since it is what closing would have made of it; a card charge never is (D3). An
+// expense that goes back to overdue is owed in owedIn, which the caller finds with FirstMonthNotClosed.
+func (i Item) Undone(period Period, owedIn kernel.YearMonth) Item {
 	if i.Status != StatusDone {
 		return i
 	}
 	i.DoneAt = nil
 	i.Status = StatusPending
+	i.OwedIn = nil
 	if period.Status == PeriodClosed && i.Kind != ItemCardCharge {
 		i.Status = StatusOverdue
+		if IsExpense(i.Kind) {
+			i.OwedIn = &owedIn
+		}
 	}
 	return i
+}
+
+// UndoneOwedFrom is the first month that could owe this expense again if it went back to overdue: the
+// month that owed it when it was paid, or else the month after its own (D7).
+func (i Item) UndoneOwedFrom() kernel.YearMonth {
+	if i.OwedIn != nil {
+		return *i.OwedIn
+	}
+	return i.Month.Next()
+}
+
+// NeedsOwedMonth says whether undoing this item makes a later month owe it, so the caller has to find one.
+func (i Item) NeedsOwedMonth(period Period) bool {
+	return i.Status == StatusDone && period.Status == PeriodClosed && IsExpense(i.Kind)
 }
 
 // Matches says whether an item passes a list's filters. A nil field passes everything.
@@ -202,7 +226,7 @@ func CreateNewItem(input NewItemInput) (NewItem, error) {
 	item := NewItem{TagID: input.TagID}
 	kind := ItemKind(input.Kind)
 	switch {
-	case isExpense(kind):
+	case IsExpense(kind):
 		item.Kind = kind
 		item.DueDate, violations = checkRequiredDueDate(input.DueDate, violations)
 	case kind == ItemIncome:

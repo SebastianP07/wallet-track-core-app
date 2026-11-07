@@ -88,6 +88,8 @@ type PeriodItem struct {
 	DoneAt     pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
 }
 
 type Person struct {

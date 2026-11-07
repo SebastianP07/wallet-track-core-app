@@ -57,6 +57,7 @@ type Item struct {
 	TagID      *string
 	Status     string
 	DoneAt     *time.Time
+	OwedIn     *kernel.YearMonth
 	Urgency    string
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -72,8 +73,10 @@ type ItemTotals struct {
 	Occasional KindTotal
 	Income     KindTotal
 	CardCharge KindTotal
-	ToPay      kernel.Money
-	ToReceive  kernel.Money
+	// Overdue is the expenses earlier months left unpaid that this month owes (D7).
+	Overdue   KindTotal
+	ToPay     kernel.Money
+	ToReceive kernel.Money
 }
 
 type Items struct {
@@ -128,10 +131,11 @@ type Person struct {
 	UpdatedAt       time.Time
 }
 
-// Kpis are the month's numbers. Card charges reach none of them (D3), and neither does any other month's
-// item (D7). Balances are today's whichever month is asked about (D6, D9). An overdue item of this very
-// month is out of ToPay and ToReceive, which read only what is pending, and in Incoming and Outgoing, which
-// read every status (D2).
+// Kpis are the month's numbers. Card charges reach none of them (D3). Balances are today's whichever month
+// is asked about (D6, D9). The overdue expenses this month owes are in ToPay while unpaid and in Outgoing
+// whatever their status, like its own expenses (D2, D7). This month's own items that closing made overdue
+// stay in Incoming and Outgoing, which read every status, and leave ToPay and ToReceive: the next month
+// owes those expenses, and overdue income counts toward no month's totals.
 type Kpis struct {
 	CurrentTotal kernel.Money
 	ToPay        kernel.Money
@@ -146,6 +150,7 @@ type Kpis struct {
 type ToPayBreakdown struct {
 	Fixed      kernel.Money
 	Occasional kernel.Money
+	Overdue    kernel.Money
 }
 
 // ComputeKpis stops at the money bound instead of failing. Writes keep each module's own sums within it,
@@ -153,7 +158,7 @@ type ToPayBreakdown struct {
 // an error would take down the page where the user fixes that. Every input lies within the bound, so the
 // arithmetic itself fits an int64.
 func ComputeKpis(accounts Accounts, totals ItemTotals) Kpis {
-	outgoing := totals.Fixed.Total + totals.Occasional.Total
+	outgoing := totals.Fixed.Total + totals.Occasional.Total + totals.Overdue.Total
 	return Kpis{
 		CurrentTotal: accounts.CurrentTotal,
 		ToPay:        totals.ToPay,
@@ -171,7 +176,7 @@ func withinBound(amount kernel.Money) kernel.Money {
 }
 
 func BreakdownOf(totals ItemTotals) ToPayBreakdown {
-	return ToPayBreakdown{Fixed: totals.Fixed.Pending, Occasional: totals.Occasional.Pending}
+	return ToPayBreakdown{Fixed: totals.Fixed.Pending, Occasional: totals.Occasional.Pending, Overdue: totals.Overdue.Pending}
 }
 
 // UpcomingDue is the pending fixed and occasional items, soonest due first. Name and id settle a tie, so the

@@ -140,14 +140,15 @@ func (r itemsReader) List(ctx context.Context, month kernel.YearMonth) (dashboar
 			Occasional: dashboarddomain.KindTotal(list.Totals.Occasional),
 			Income:     dashboarddomain.KindTotal(list.Totals.Income),
 			CardCharge: dashboarddomain.KindTotal(list.Totals.CardCharge),
+			Overdue:    dashboarddomain.KindTotal(list.Totals.Overdue),
 			ToPay:      list.Totals.ToPay,
 			ToReceive:  list.Totals.ToReceive,
 		},
 	}, nil
 }
 
-func (r itemsReader) Overdue(ctx context.Context) (dashboarddomain.OverdueItems, error) {
-	list, err := r.overdue.Execute(ctx)
+func (r itemsReader) Overdue(ctx context.Context, month kernel.YearMonth) (dashboarddomain.OverdueItems, error) {
+	list, err := r.overdue.Execute(ctx, month)
 	if err != nil {
 		return dashboarddomain.OverdueItems{}, err
 	}
@@ -174,6 +175,7 @@ func dashboardItems(views []expensesapplication.ItemView) []dashboarddomain.Item
 			TagID:      view.TagID,
 			Status:     string(view.Status),
 			DoneAt:     view.DoneAt,
+			OwedIn:     view.OwedIn,
 			Urgency:    string(view.Urgency),
 			CreatedAt:  view.CreatedAt,
 			UpdatedAt:  view.UpdatedAt,

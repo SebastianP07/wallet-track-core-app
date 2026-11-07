@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0 — 2026-11-07 — Owner feedback
+
+- D7 rewritten: closing a month carries its unpaid fixed and occasional items, and the overdue expenses it owed, to the
+  first later month that is not closed (`kernel.FirstMonthNotClosed`, locking months in ascending order). Unreceived income
+  turns overdue in place as before; card charges are untouched (D3). Undoing "paid" on an expense of a closed month makes it
+  overdue again in the month that owed it, or the next one not closed.
+- Migration `00009_overdue_carry_forward.sql`: `period_items.owed_year`/`owed_month`, constraints that keep them on overdue
+  or paid expenses only, an index, and a backfill that gives every overdue expense already stored the month that owes it.
+- Totals: a month's `overdue` total (owed here: total and unpaid) joins Por pagar and Se va, and the Dashboard's To pay
+  breakdown (D1, D2). Contract: `owedIn` on `PeriodItem`, `overdue` in `PeriodItemTotals` and `ToPayBreakdown`, and
+  `GET /periods/{period}/overdue-items` replaces `GET /overdue-items`. sqlc regenerated. No new automated tests (T7).
+
 ## 0.16.0 — 2026-11-07 — Production-like local stack
 
 - `Dockerfile`: builds on `golang:1.27.3-alpine3.24` with `GOTOOLCHAIN=local` and runs on `distroless/static-debian13:nonroot`,

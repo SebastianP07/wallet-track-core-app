@@ -185,6 +185,9 @@ Then sign in at the origin, with the enrollment secret it printed.
 - Opening clones the active templates only when it creates the month, so a template added later reaches the next month
   opened, not one already open. Opening a month that exists answers 200 and changes nothing, even if it is closed.
 - Closing a month that has no period is a 404. Closing a closed month is a 200 that changes nothing. There is no reopen.
+- Closing carries every unpaid fixed and occasional item, and every overdue expense the month owed, to the first later
+  month that is not closed (D7). That month need not be opened: it lists them once it is. Months closed out of order are
+  skipped. The rows themselves move nothing but `owed_year`/`owed_month`; `period` stays their month of origin.
 
 ## Item behavior worth knowing
 
@@ -197,10 +200,12 @@ Then sign in at the origin, with the enrollment secret it printed.
   count toward `total`.
 - Income has no due date and no urgency: sending `dueDate` for it is a 400, on a create or an edit. `personId` cannot be
   set through these endpoints; opening a month generates those rows (D4).
-- `totals.toReceive` is Por llegar and `totals.toPay` is Por pagar (D1). Neither moves the other, and received, paid and
-  overdue items are out of both.
+- `totals.toReceive` is Por llegar and `totals.toPay` is Por pagar (D1). Neither moves the other. Received and paid items
+  are out of both, and so are the month's own overdue items. `totals.overdue` is the overdue expenses this month owes
+  (`owedIn`): its `pending` part is in `toPay` (D7). It stops at `kernel.MaxMoney` rather than fail.
 - In a closed month, adding an item is a 409. Toggling, editing and deleting are allowed. Undo returns an item to
-  `overdue` there, and to `pending` in an open month.
+  `overdue` there, and to `pending` in an open month. An expense undone in a closed month is owed again by the month that
+  owed it when it was paid, or the month after its own, moving on past closed months.
 - `dueDate` is any real date from 2000-01-01 on. It need not fall inside the item's month.
 - Urgency is by calendar days left in `America/Bogota`. An overdue item still gets one; only a done item or one with no
   due date is always `none`.
@@ -209,12 +214,14 @@ Then sign in at the origin, with the enrollment secret it printed.
 
 ## Overdue list
 
-- `GET /overdue-items` lists every `overdue` fixed, occasional and income item of a closed month, whatever month is being
-  looked at, oldest month first, then by due date. Pending items of open months and card charges never appear (D3, D7).
-- `expenseTotal` and `incomeTotal` sum the whole list. They count toward no month's `toPay` or `toReceive`. Each month's sums
-  stay within `kernel.MaxMoney`, but nothing bounds the months together, so these two stop at that bound rather than fail.
-- The list has no writes of its own: the item's done endpoints settle it. It stays in its original month and leaves the
-  list; undo returns it. A person-linked item records its payment as described below.
+- `GET /periods/{period}/overdue-items` lists the `overdue` fixed and occasional items the month owes (`owedIn`), oldest
+  month of origin first, then every `overdue` income item of a closed month, whichever month is asked. A month not opened is
+  a 404. Pending items and card charges never appear (D3, D7).
+- `expenseTotal` equals the month's `totals.overdue.pending`, part of its `toPay`. `incomeTotal` counts toward no month's
+  totals. Nothing bounds the months together, so both stop at `kernel.MaxMoney` rather than fail.
+- The list has no writes of its own: the item's done endpoints settle it. A paid expense leaves the list, keeps its
+  `owedIn` and stays in that month's `outgoing`; undo returns it. A person-linked item records its payment as described
+  below.
 
 ## Dashboard
 
@@ -223,8 +230,9 @@ Then sign in at the origin, with the enrollment secret it printed.
   `cmd/server/dashboard.go`.
 - `currentTotal` and `savings` are today's balances, so a past or closed month shows the same ones as any other (D6, D9).
 - An overdue item of the selected month is in `incoming` and `outgoing`, which read every status (D2), and out of `toPay` and
-  `toReceive`, which read only what is pending (D7). So a closed month has `toPay` and `toReceive` at 0, and its `surplus`
-  equals today's `currentTotal`. Other months' items and card charges reach no KPI (D3, D7).
+  `toReceive`, which read only what is pending (D7). The overdue expenses the month owes are in `toPay` while unpaid and in
+  `outgoing` paid or not, and in `toPayBreakdown.overdue` (D7). A closed month owes nothing any more, so its `toPay` and
+  `toReceive` are 0 and its `surplus` equals today's `currentTotal`. Card charges reach no KPI (D3).
 - `surplus` stops at `kernel.MaxMoney` in either direction. Writes bound balances and items apart, not this sum, and an error
   would take down the page where the user fixes it. Writes keep `incoming`, `outgoing` and `balance` within the bound already.
 - A month not opened is a 404, as the contract says, so its balances come from `GET /accounts`.

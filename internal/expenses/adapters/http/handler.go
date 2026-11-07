@@ -74,7 +74,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	write(http.MethodDelete, "/period-items/{id}", h.deleteItem)
 	write(http.MethodPut, "/period-items/{id}/done", h.markDone)
 	write(http.MethodDelete, "/period-items/{id}/done", h.unmarkDone)
-	read("/overdue-items", h.listOverdueItems)
+	read("/periods/{period}/overdue-items", h.listOverdueItems)
 }
 
 type itemResponse struct {
@@ -90,6 +90,7 @@ type itemResponse struct {
 	TagID      *string    `json:"tagId"`
 	Status     string     `json:"status"`
 	DoneAt     *time.Time `json:"doneAt"`
+	OwedIn     *string    `json:"owedIn"`
 	Urgency    string     `json:"urgency"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
@@ -105,6 +106,7 @@ type totalsResponse struct {
 	Occasional kindTotalResponse `json:"occasional"`
 	Income     kindTotalResponse `json:"income"`
 	CardCharge kindTotalResponse `json:"cardCharge"`
+	Overdue    kindTotalResponse `json:"overdue"`
 	ToPay      int64             `json:"toPay"`
 	ToReceive  int64             `json:"toReceive"`
 }
@@ -153,6 +155,10 @@ func toItemResponse(view application.ItemView) itemResponse {
 		due := view.DueDate.Format(dateLayout)
 		response.DueDate = &due
 	}
+	if view.OwedIn != nil {
+		owedIn := view.OwedIn.String()
+		response.OwedIn = &owedIn
+	}
 	return response
 }
 
@@ -185,6 +191,7 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 			Occasional: toKindTotal(list.Totals.Occasional),
 			Income:     toKindTotal(list.Totals.Income),
 			CardCharge: toKindTotal(list.Totals.CardCharge),
+			Overdue:    toKindTotal(list.Totals.Overdue),
 			ToPay:      int64(list.Totals.ToPay),
 			ToReceive:  int64(list.Totals.ToReceive),
 		},
@@ -192,7 +199,11 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listOverdueItems(w http.ResponseWriter, r *http.Request) {
-	list, err := h.UseCases.Overdue.Execute(r.Context())
+	month, ok := pathMonth(w, r)
+	if !ok {
+		return
+	}
+	list, err := h.UseCases.Overdue.Execute(r.Context(), month)
 	if err != nil {
 		h.writeError(w, r, err)
 		return

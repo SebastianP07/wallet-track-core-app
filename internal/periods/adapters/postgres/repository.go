@@ -105,16 +105,34 @@ func (r *Repository) MarkPeriodClosed(ctx context.Context, id string) (domain.Pe
 	return toPeriodOrNotFound(row, err)
 }
 
-func (r *Repository) MarkPendingItemsOverdue(ctx context.Context, periodID string, kinds []domain.ItemKind) error {
+func (r *Repository) CarryPendingExpenses(ctx context.Context, periodID string, to kernel.YearMonth) error {
 	uuid, err := parseID(periodID)
 	if err != nil {
 		return err
 	}
-	names := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		names = append(names, string(kind))
+	year, month := monthInts(to)
+	return r.queries.CarryPendingExpenses(ctx, sqlcgen.CarryPendingExpensesParams{PeriodID: uuid, OwedYear: year, OwedMonth: month})
+}
+
+func (r *Repository) CarryOwedExpenses(ctx context.Context, from, to kernel.YearMonth) error {
+	fromYear, fromMonth := monthInts(from)
+	toYear, toMonth := monthInts(to)
+	return r.queries.CarryOwedExpenses(ctx, sqlcgen.CarryOwedExpensesParams{
+		FromYear: fromYear, FromMonth: fromMonth, ToYear: toYear, ToMonth: toMonth,
+	})
+}
+
+func (r *Repository) MarkPendingIncomeOverdue(ctx context.Context, periodID string) error {
+	uuid, err := parseID(periodID)
+	if err != nil {
+		return err
 	}
-	return r.queries.MarkPendingItemsOverdue(ctx, sqlcgen.MarkPendingItemsOverdueParams{PeriodID: uuid, Kinds: names})
+	return r.queries.MarkPendingIncomeOverdue(ctx, uuid)
+}
+
+func monthInts(month kernel.YearMonth) (pgtype.Int4, pgtype.Int4) {
+	columns := monthColumns(month)
+	return pgtype.Int4{Int32: columns.Year, Valid: true}, pgtype.Int4{Int32: columns.Month, Valid: true}
 }
 
 func (r *Repository) AddItem(ctx context.Context, item domain.NewItem) error {

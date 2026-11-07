@@ -42,3 +42,25 @@ func (m YearMonth) DateOn(day int) time.Time {
 	lastDay := time.Date(m.Year, m.Month+1, 0, 0, 0, 0, 0, time.UTC).Day()
 	return time.Date(m.Year, m.Month, min(day, lastDay), 0, 0, 0, 0, time.UTC)
 }
+
+// Next is the calendar month after this one.
+func (m YearMonth) Next() YearMonth {
+	if m.Month == time.December {
+		return YearMonth{Year: m.Year + 1, Month: time.January}
+	}
+	return YearMonth{Year: m.Year, Month: m.Month + 1}
+}
+
+// FirstMonthNotClosed is from, or the first month after it that isClosed says no to (D7). A month not
+// opened yet is not closed. Callers lock each month as they ask, in ascending order, so two closes
+// cannot strand an item in a month that closed meanwhile.
+func FirstMonthNotClosed(from YearMonth, isClosed func(YearMonth) (bool, error)) (YearMonth, error) {
+	month := from
+	for {
+		closed, err := isClosed(month)
+		if err != nil || !closed {
+			return month, err
+		}
+		month = month.Next()
+	}
+}

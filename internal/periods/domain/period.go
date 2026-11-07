@@ -52,12 +52,6 @@ const (
 	ItemCardCharge ItemKind = "card_charge"
 )
 
-// KindsOverdueOnClose are the kinds a closing month marks overdue when still pending (D7).
-// Card charges are informational and stay as they are (D3).
-func KindsOverdueOnClose() []ItemKind {
-	return []ItemKind{ItemFixed, ItemOccasional, ItemIncome}
-}
-
 // NewItem is a pending item that has not been stored yet.
 type NewItem struct {
 	PeriodID   string

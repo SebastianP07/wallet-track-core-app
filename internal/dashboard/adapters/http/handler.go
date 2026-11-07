@@ -63,6 +63,7 @@ type kpisResponse struct {
 type toPayBreakdownResponse struct {
 	Fixed      int64 `json:"fixed"`
 	Occasional int64 `json:"occasional"`
+	Overdue    int64 `json:"overdue"`
 }
 
 type accountResponse struct {
@@ -93,6 +94,7 @@ type itemResponse struct {
 	TagID      *string    `json:"tagId"`
 	Status     string     `json:"status"`
 	DoneAt     *time.Time `json:"doneAt"`
+	OwedIn     *string    `json:"owedIn"`
 	Urgency    string     `json:"urgency"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`
@@ -108,6 +110,7 @@ type itemTotalsResponse struct {
 	Occasional kindTotalResponse `json:"occasional"`
 	Income     kindTotalResponse `json:"income"`
 	CardCharge kindTotalResponse `json:"cardCharge"`
+	Overdue    kindTotalResponse `json:"overdue"`
 	ToPay      int64             `json:"toPay"`
 	ToReceive  int64             `json:"toReceive"`
 }
@@ -235,6 +238,7 @@ func toResponse(d application.Dashboard) dashboardResponse {
 		ToPayBreakdown: toPayBreakdownResponse{
 			Fixed:      int64(d.ToPayBreakdown.Fixed),
 			Occasional: int64(d.ToPayBreakdown.Occasional),
+			Overdue:    int64(d.ToPayBreakdown.Overdue),
 		},
 		Accounts:    toAccounts(d.Accounts),
 		Items:       itemListResponse{Items: toItems(d.Items.Items), Totals: toItemTotals(d.Items.Totals)},
@@ -285,6 +289,7 @@ func toItems(items []domain.Item) []itemResponse {
 			TagID:      item.TagID,
 			Status:     item.Status,
 			DoneAt:     item.DoneAt,
+			OwedIn:     formatMonth(item.OwedIn),
 			Urgency:    item.Urgency,
 			CreatedAt:  item.CreatedAt,
 			UpdatedAt:  item.UpdatedAt,
@@ -299,6 +304,7 @@ func toItemTotals(totals domain.ItemTotals) itemTotalsResponse {
 		Occasional: toKindTotal(totals.Occasional),
 		Income:     toKindTotal(totals.Income),
 		CardCharge: toKindTotal(totals.CardCharge),
+		Overdue:    toKindTotal(totals.Overdue),
 		ToPay:      int64(totals.ToPay),
 		ToReceive:  int64(totals.ToReceive),
 	}
@@ -362,5 +368,13 @@ func formatDate(date *time.Time) *string {
 		return nil
 	}
 	text := date.Format(dateLayout)
+	return &text
+}
+
+func formatMonth(month *kernel.YearMonth) *string {
+	if month == nil {
+		return nil
+	}
+	text := month.String()
 	return &text
 }

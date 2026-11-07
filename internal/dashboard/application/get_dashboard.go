@@ -21,7 +21,7 @@ type AccountsReader interface {
 
 type ItemsReader interface {
 	List(ctx context.Context, month kernel.YearMonth) (domain.Items, error)
-	Overdue(ctx context.Context) (domain.OverdueItems, error)
+	Overdue(ctx context.Context, month kernel.YearMonth) (domain.OverdueItems, error)
 }
 
 type CardsReader interface {
@@ -76,7 +76,7 @@ func (u *GetDashboard) Execute(ctx context.Context, month kernel.YearMonth) (Das
 	if err != nil {
 		return Dashboard{}, fmt.Errorf("read items: %w", err)
 	}
-	overdue, err := u.readers.Items.Overdue(ctx)
+	overdue, err := u.readers.Items.Overdue(ctx, month)
 	if err != nil {
 		return Dashboard{}, fmt.Errorf("read overdue items: %w", err)
 	}

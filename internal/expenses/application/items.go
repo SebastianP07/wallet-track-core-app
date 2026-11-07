@@ -46,7 +46,11 @@ func (u *ListItems) Execute(ctx context.Context, month kernel.YearMonth, filter 
 	if err != nil {
 		return ItemList{}, fmt.Errorf("list items: %w", err)
 	}
-	totals, err := domain.ComputeTotals(items)
+	owed, err := u.repo.ListOwedItems(ctx, month)
+	if err != nil {
+		return ItemList{}, fmt.Errorf("list owed items: %w", err)
+	}
+	totals, err := domain.ComputeTotals(items, owed)
 	if err != nil {
 		return ItemList{}, fmt.Errorf("total items: %w", err)
 	}
@@ -59,7 +63,8 @@ func (u *ListItems) Execute(ctx context.Context, month kernel.YearMonth, filter 
 	return ItemList{Items: views, Totals: totals}, nil
 }
 
-// OverdueList is what closed months left unsettled, whichever month is being looked at (D7).
+// OverdueList is a month's Overdue section (D7): the expenses earlier months left unpaid that it owes,
+// oldest first, then the income every closed month left unreceived, as before.
 type OverdueList struct {
 	Items  []ItemView
 	Totals domain.OverdueTotals
@@ -74,11 +79,21 @@ func NewListOverdueItems(repo Repository, clock Clock) *ListOverdueItems {
 	return &ListOverdueItems{repo: repo, clock: clock}
 }
 
-func (u *ListOverdueItems) Execute(ctx context.Context) (OverdueList, error) {
-	items, err := u.repo.ListOverdueItems(ctx)
-	if err != nil {
-		return OverdueList{}, fmt.Errorf("list overdue items: %w", err)
+func (u *ListOverdueItems) Execute(ctx context.Context, month kernel.YearMonth) (OverdueList, error) {
+	if _, err := u.repo.GetPeriod(ctx, month); err != nil {
+		return OverdueList{}, err
 	}
+	owed, err := u.repo.ListOwedItems(ctx, month)
+	if err != nil {
+		return OverdueList{}, fmt.Errorf("list owed items: %w", err)
+	}
+	income, err := u.repo.ListOverdueIncome(ctx)
+	if err != nil {
+		return OverdueList{}, fmt.Errorf("list overdue income: %w", err)
+	}
+	// A paid one stays in the month's totals but leaves the list.
+	items := slices.DeleteFunc(owed, func(item domain.Item) bool { return item.Status != domain.StatusOverdue })
+	items = append(items, income...)
 	views := make([]ItemView, 0, len(items))
 	for _, item := range items {
 		views = append(views, view(item, u.clock))
@@ -219,8 +234,8 @@ func NewMarkItemDone(tx TxManager, clock Clock) *MarkItemDone {
 // Execute records the member's payment when the item is person-linked (D4, D8). A repeat records nothing.
 func (u *MarkItemDone) Execute(ctx context.Context, id string) (ItemView, error) {
 	now := u.clock.Now()
-	return changeStatus(ctx, u.tx, u.clock, id, func(item domain.Item, _ domain.Period) domain.Item {
-		return item.Done(now)
+	return changeStatus(ctx, u.tx, u.clock, id, func(_ context.Context, _ Repository, item domain.Item, _ domain.Period) (domain.Item, error) {
+		return item.Done(now), nil
 	}, func(ctx context.Context, payments MemberPayments, item domain.Item) error {
 		return payments.RecordForItem(ctx, *item.PersonID, item.ID, item.Month)
 	})
@@ -235,9 +250,10 @@ func NewUnmarkItemDone(tx TxManager, clock Clock) *UnmarkItemDone {
 	return &UnmarkItemDone{tx: tx, clock: clock}
 }
 
-// Execute removes the payment that marking this item recorded, and no other (D4, D8).
+// Execute removes the payment that marking this item recorded, and no other (D4, D8). An expense of a
+// closed month goes back to overdue in the first month from the one that owed it that is not closed (D7).
 func (u *UnmarkItemDone) Execute(ctx context.Context, id string) (ItemView, error) {
-	return changeStatus(ctx, u.tx, u.clock, id, domain.Item.Undone,
+	return changeStatus(ctx, u.tx, u.clock, id, undo,
 		func(ctx context.Context, payments MemberPayments, item domain.Item) error {
 			return payments.RemoveForItem(ctx, item.ID)
 		})
@@ -251,7 +267,7 @@ func changeStatus(
 	tx TxManager,
 	clock Clock,
 	id string,
-	change func(domain.Item, domain.Period) domain.Item,
+	change func(context.Context, Repository, domain.Item, domain.Period) (domain.Item, error),
 	syncPayment func(context.Context, MemberPayments, domain.Item) error,
 ) (ItemView, error) {
 	var result domain.Item
@@ -264,7 +280,10 @@ func changeStatus(
 		if err != nil {
 			return err
 		}
-		result = change(item, period)
+		result, err = change(ctx, repo, item, period)
+		if err != nil {
+			return err
+		}
 		if result.Status == item.Status {
 			return nil
 		}
@@ -282,8 +301,32 @@ func changeStatus(
 	return view(result, clock), nil
 }
 
+// undo locks each month it asks about, after the item's own, so it takes period rows in ascending order as a
+// close does.
+func undo(ctx context.Context, repo Repository, item domain.Item, period domain.Period) (domain.Item, error) {
+	if !item.NeedsOwedMonth(period) {
+		return item.Undone(period, kernel.YearMonth{}), nil
+	}
+	owedIn, err := firstMonthNotClosed(ctx, repo, item.UndoneOwedFrom())
+	if err != nil {
+		return domain.Item{}, err
+	}
+	return item.Undone(period, owedIn), nil
+}
+
+func firstMonthNotClosed(ctx context.Context, repo Repository, from kernel.YearMonth) (kernel.YearMonth, error) {
+	return kernel.FirstMonthNotClosed(from, func(month kernel.YearMonth) (bool, error) {
+		period, err := repo.LockPeriod(ctx, month)
+		if errors.Is(err, domain.ErrPeriodNotFound) {
+			return false, nil
+		}
+		return period.Status == domain.PeriodClosed, err
+	})
+}
+
+// checkTotals bounds a month's own items. What other months leave owed in it is capped instead (D7).
 func checkTotals(items []domain.Item) error {
-	if _, err := domain.ComputeTotals(items); err != nil {
+	if _, err := domain.ComputeTotals(items, nil); err != nil {
 		if errors.Is(err, domain.ErrTotalOutOfRange) {
 			return domain.TotalViolation()
 		}
@@ -352,7 +395,11 @@ func (m *MemberItems) Unmark(ctx context.Context, itemID string) error {
 	if err != nil {
 		return err
 	}
-	undone := item.Undone(period)
+	// Only person-linked income comes here, which no later month ever owes (D7).
+	undone, err := undo(ctx, m.repo, item, period)
+	if err != nil {
+		return err
+	}
 	if undone.Status == item.Status {
 		return nil
 	}

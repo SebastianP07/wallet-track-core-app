@@ -23,7 +23,12 @@ type Repository interface {
 	// LockPeriod holds the month's row until the transaction ends.
 	LockPeriod(ctx context.Context, month kernel.YearMonth) (domain.Period, error)
 	MarkPeriodClosed(ctx context.Context, id string) (domain.Period, error)
-	MarkPendingItemsOverdue(ctx context.Context, periodID string, kinds []domain.ItemKind) error
+	// CarryPendingExpenses makes the month's pending fixed and occasional items overdue, owed in to (D7).
+	CarryPendingExpenses(ctx context.Context, periodID string, to kernel.YearMonth) error
+	// CarryOwedExpenses moves the overdue expenses owed in from, whatever their month of origin, to to (D7).
+	CarryOwedExpenses(ctx context.Context, from, to kernel.YearMonth) error
+	// MarkPendingIncomeOverdue leaves the month's unreceived income overdue in the month itself (D7).
+	MarkPendingIncomeOverdue(ctx context.Context, periodID string) error
 	// AddItem does nothing when the month already has an item of that template.
 	AddItem(ctx context.Context, item domain.NewItem) error
 	// AddMemberItem does nothing when the month already has an income item of that person (D4).

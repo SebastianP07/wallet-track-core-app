@@ -23,8 +23,11 @@ type Repository interface {
 	LockPeriodOfItem(ctx context.Context, itemID string) (domain.Period, error)
 
 	ListItems(ctx context.Context, periodID string) ([]domain.Item, error)
-	// ListOverdueItems spans every closed month, oldest first.
-	ListOverdueItems(ctx context.Context) ([]domain.Item, error)
+	// ListOwedItems is the expenses earlier months left unpaid that this month owes, paid since or not,
+	// oldest month of origin first (D7).
+	ListOwedItems(ctx context.Context, month kernel.YearMonth) ([]domain.Item, error)
+	// ListOverdueIncome spans every closed month, oldest first.
+	ListOverdueIncome(ctx context.Context) ([]domain.Item, error)
 	GetItem(ctx context.Context, id string) (domain.Item, error)
 	CreateItem(ctx context.Context, periodID string, item domain.NewItem) (domain.Item, error)
 	UpdateItem(ctx context.Context, item domain.Item) (domain.Item, error)

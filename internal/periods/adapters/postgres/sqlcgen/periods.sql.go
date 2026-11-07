@@ -65,6 +65,46 @@ func (q *Queries) AddMemberItem(ctx context.Context, arg AddMemberItemParams) er
 	return err
 }
 
+const carryOwedExpenses = `-- name: CarryOwedExpenses :exec
+UPDATE period_items
+SET owed_year = $1, owed_month = $2
+WHERE status = 'overdue' AND owed_year = $3 AND owed_month = $4
+`
+
+type CarryOwedExpensesParams struct {
+	ToYear    pgtype.Int4
+	ToMonth   pgtype.Int4
+	FromYear  pgtype.Int4
+	FromMonth pgtype.Int4
+}
+
+func (q *Queries) CarryOwedExpenses(ctx context.Context, arg CarryOwedExpensesParams) error {
+	_, err := q.db.Exec(ctx, carryOwedExpenses,
+		arg.ToYear,
+		arg.ToMonth,
+		arg.FromYear,
+		arg.FromMonth,
+	)
+	return err
+}
+
+const carryPendingExpenses = `-- name: CarryPendingExpenses :exec
+UPDATE period_items
+SET status = 'overdue', owed_year = $2, owed_month = $3
+WHERE period_id = $1 AND status = 'pending' AND kind IN ('fixed', 'occasional')
+`
+
+type CarryPendingExpensesParams struct {
+	PeriodID  pgtype.UUID
+	OwedYear  pgtype.Int4
+	OwedMonth pgtype.Int4
+}
+
+func (q *Queries) CarryPendingExpenses(ctx context.Context, arg CarryPendingExpensesParams) error {
+	_, err := q.db.Exec(ctx, carryPendingExpenses, arg.PeriodID, arg.OwedYear, arg.OwedMonth)
+	return err
+}
+
 const createPeriod = `-- name: CreatePeriod :one
 INSERT INTO periods (year, month)
 VALUES ($1, $2)
@@ -356,19 +396,14 @@ func (q *Queries) LockTemplate(ctx context.Context, id pgtype.UUID) (RecurringTe
 	return i, err
 }
 
-const markPendingItemsOverdue = `-- name: MarkPendingItemsOverdue :exec
+const markPendingIncomeOverdue = `-- name: MarkPendingIncomeOverdue :exec
 UPDATE period_items
 SET status = 'overdue'
-WHERE period_id = $1 AND status = 'pending' AND kind = ANY($2::text[])
+WHERE period_id = $1 AND status = 'pending' AND kind = 'income'
 `
 
-type MarkPendingItemsOverdueParams struct {
-	PeriodID pgtype.UUID
-	Kinds    []string
-}
-
-func (q *Queries) MarkPendingItemsOverdue(ctx context.Context, arg MarkPendingItemsOverdueParams) error {
-	_, err := q.db.Exec(ctx, markPendingItemsOverdue, arg.PeriodID, arg.Kinds)
+func (q *Queries) MarkPendingIncomeOverdue(ctx context.Context, periodID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markPendingIncomeOverdue, periodID)
 	return err
 }
 

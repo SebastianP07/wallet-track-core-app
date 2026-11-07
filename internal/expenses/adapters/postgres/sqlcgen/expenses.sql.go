@@ -57,7 +57,7 @@ func (q *Queries) DeleteItem(ctx context.Context, id pgtype.UUID) (int64, error)
 
 const getItem = `-- name: GetItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.id = $1
@@ -77,6 +77,8 @@ type GetItemRow struct {
 	TagID      pgtype.UUID
 	Status     string
 	DoneAt     pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 }
@@ -98,6 +100,8 @@ func (q *Queries) GetItem(ctx context.Context, id pgtype.UUID) (GetItemRow, erro
 		&i.TagID,
 		&i.Status,
 		&i.DoneAt,
+		&i.OwedYear,
+		&i.OwedMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -106,7 +110,7 @@ func (q *Queries) GetItem(ctx context.Context, id pgtype.UUID) (GetItemRow, erro
 
 const getMemberItem = `-- name: GetMemberItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE p.year = $1 AND p.month = $2 AND i.person_id = $3 AND i.kind = 'income'
@@ -132,6 +136,8 @@ type GetMemberItemRow struct {
 	TagID      pgtype.UUID
 	Status     string
 	DoneAt     pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 }
@@ -153,6 +159,8 @@ func (q *Queries) GetMemberItem(ctx context.Context, arg GetMemberItemParams) (G
 		&i.TagID,
 		&i.Status,
 		&i.DoneAt,
+		&i.OwedYear,
+		&i.OwedMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -191,7 +199,7 @@ func (q *Queries) GetPeriod(ctx context.Context, arg GetPeriodParams) (GetPeriod
 
 const listItems = `-- name: ListItems :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.period_id = $1
@@ -212,6 +220,8 @@ type ListItemsRow struct {
 	TagID      pgtype.UUID
 	Status     string
 	DoneAt     pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 }
@@ -239,6 +249,8 @@ func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListIt
 			&i.TagID,
 			&i.Status,
 			&i.DoneAt,
+			&i.OwedYear,
+			&i.OwedMonth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -252,16 +264,16 @@ func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListIt
 	return items, nil
 }
 
-const listOverdueItems = `-- name: ListOverdueItems :many
+const listOverdueIncome = `-- name: ListOverdueIncome :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
-WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind <> 'card_charge'
-ORDER BY p.year, p.month, i.due_date NULLS LAST, i.name, i.id
+WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind = 'income'
+ORDER BY p.year, p.month, i.name, i.id
 `
 
-type ListOverdueItemsRow struct {
+type ListOverdueIncomeRow struct {
 	ID         pgtype.UUID
 	Year       int32
 	Month      int32
@@ -275,19 +287,21 @@ type ListOverdueItemsRow struct {
 	TagID      pgtype.UUID
 	Status     string
 	DoneAt     pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 }
 
-func (q *Queries) ListOverdueItems(ctx context.Context) ([]ListOverdueItemsRow, error) {
-	rows, err := q.db.Query(ctx, listOverdueItems)
+func (q *Queries) ListOverdueIncome(ctx context.Context) ([]ListOverdueIncomeRow, error) {
+	rows, err := q.db.Query(ctx, listOverdueIncome)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListOverdueItemsRow
+	var items []ListOverdueIncomeRow
 	for rows.Next() {
-		var i ListOverdueItemsRow
+		var i ListOverdueIncomeRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Year,
@@ -302,6 +316,80 @@ func (q *Queries) ListOverdueItems(ctx context.Context) ([]ListOverdueItemsRow, 
 			&i.TagID,
 			&i.Status,
 			&i.DoneAt,
+			&i.OwedYear,
+			&i.OwedMonth,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOwedItems = `-- name: ListOwedItems :many
+SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+FROM period_items AS i
+JOIN periods AS p ON p.id = i.period_id
+WHERE i.owed_year = $1 AND i.owed_month = $2
+ORDER BY p.year, p.month, i.due_date NULLS LAST, i.name, i.id
+`
+
+type ListOwedItemsParams struct {
+	OwedYear  pgtype.Int4
+	OwedMonth pgtype.Int4
+}
+
+type ListOwedItemsRow struct {
+	ID         pgtype.UUID
+	Year       int32
+	Month      int32
+	TemplateID pgtype.UUID
+	PersonID   pgtype.UUID
+	Kind       string
+	Name       string
+	Amount     int64
+	DueDate    pgtype.Date
+	CardID     pgtype.UUID
+	TagID      pgtype.UUID
+	Status     string
+	DoneAt     pgtype.Timestamptz
+	OwedYear   pgtype.Int4
+	OwedMonth  pgtype.Int4
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ListOwedItems(ctx context.Context, arg ListOwedItemsParams) ([]ListOwedItemsRow, error) {
+	rows, err := q.db.Query(ctx, listOwedItems, arg.OwedYear, arg.OwedMonth)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOwedItemsRow
+	for rows.Next() {
+		var i ListOwedItemsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Year,
+			&i.Month,
+			&i.TemplateID,
+			&i.PersonID,
+			&i.Kind,
+			&i.Name,
+			&i.Amount,
+			&i.DueDate,
+			&i.CardID,
+			&i.TagID,
+			&i.Status,
+			&i.DoneAt,
+			&i.OwedYear,
+			&i.OwedMonth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -375,18 +463,26 @@ func (q *Queries) LockPeriodOfItem(ctx context.Context, id pgtype.UUID) (LockPer
 
 const setItemStatus = `-- name: SetItemStatus :execrows
 UPDATE period_items
-SET status = $2, done_at = $3
+SET status = $2, done_at = $3, owed_year = $4, owed_month = $5
 WHERE id = $1
 `
 
 type SetItemStatusParams struct {
-	ID     pgtype.UUID
-	Status string
-	DoneAt pgtype.Timestamptz
+	ID        pgtype.UUID
+	Status    string
+	DoneAt    pgtype.Timestamptz
+	OwedYear  pgtype.Int4
+	OwedMonth pgtype.Int4
 }
 
 func (q *Queries) SetItemStatus(ctx context.Context, arg SetItemStatusParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setItemStatus, arg.ID, arg.Status, arg.DoneAt)
+	result, err := q.db.Exec(ctx, setItemStatus,
+		arg.ID,
+		arg.Status,
+		arg.DoneAt,
+		arg.OwedYear,
+		arg.OwedMonth,
+	)
 	if err != nil {
 		return 0, err
 	}

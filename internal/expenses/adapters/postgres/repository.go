@@ -103,8 +103,23 @@ func (r *Repository) ListItems(ctx context.Context, periodID string) ([]domain.I
 	return items, nil
 }
 
-func (r *Repository) ListOverdueItems(ctx context.Context) ([]domain.Item, error) {
-	rows, err := r.queries.ListOverdueItems(ctx)
+func (r *Repository) ListOwedItems(ctx context.Context, month kernel.YearMonth) ([]domain.Item, error) {
+	rows, err := r.queries.ListOwedItems(ctx, sqlcgen.ListOwedItemsParams{
+		OwedYear:  pgtype.Int4{Int32: yearColumn(month), Valid: true},
+		OwedMonth: pgtype.Int4{Int32: monthColumn(month), Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.Item, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, toItem(sqlcgen.GetItemRow(row)))
+	}
+	return items, nil
+}
+
+func (r *Repository) ListOverdueIncome(ctx context.Context) ([]domain.Item, error) {
+	rows, err := r.queries.ListOverdueIncome(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +216,12 @@ func (r *Repository) SetItemStatus(ctx context.Context, item domain.Item) (domai
 	if item.DoneAt != nil {
 		doneAt = pgtype.Timestamptz{Time: *item.DoneAt, Valid: true}
 	}
-	updated, err := r.queries.SetItemStatus(ctx, sqlcgen.SetItemStatusParams{ID: uuid, Status: string(item.Status), DoneAt: doneAt})
+	params := sqlcgen.SetItemStatusParams{ID: uuid, Status: string(item.Status), DoneAt: doneAt}
+	if item.OwedIn != nil {
+		params.OwedYear = pgtype.Int4{Int32: yearColumn(*item.OwedIn), Valid: true}
+		params.OwedMonth = pgtype.Int4{Int32: monthColumn(*item.OwedIn), Valid: true}
+	}
+	updated, err := r.queries.SetItemStatus(ctx, params)
 	if err != nil {
 		return domain.Item{}, err
 	}
@@ -326,6 +346,9 @@ func toItem(row sqlcgen.GetItemRow) domain.Item {
 	if row.DoneAt.Valid {
 		done := row.DoneAt.Time
 		item.DoneAt = &done
+	}
+	if row.OwedYear.Valid && row.OwedMonth.Valid {
+		item.OwedIn = &kernel.YearMonth{Year: int(row.OwedYear.Int32), Month: time.Month(row.OwedMonth.Int32)}
 	}
 	return item
 }

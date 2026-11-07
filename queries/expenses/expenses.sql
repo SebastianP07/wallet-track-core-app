@@ -18,7 +18,7 @@ FOR UPDATE OF p;
 
 -- name: ListItems :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.period_id = $1
@@ -26,7 +26,7 @@ ORDER BY i.due_date NULLS LAST, i.name, i.id;
 
 -- name: GetItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.id = $1;
@@ -43,7 +43,7 @@ WHERE id = $1;
 
 -- name: SetItemStatus :execrows
 UPDATE period_items
-SET status = $2, done_at = $3
+SET status = $2, done_at = $3, owed_year = $4, owed_month = $5
 WHERE id = $1;
 
 -- name: DeleteItem :execrows
@@ -52,15 +52,23 @@ WHERE id = $1;
 
 -- name: GetMemberItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE p.year = $1 AND p.month = $2 AND i.person_id = $3 AND i.kind = 'income';
 
--- name: ListOverdueItems :many
+-- name: ListOwedItems :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
-WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind <> 'card_charge'
+WHERE i.owed_year = @owed_year AND i.owed_month = @owed_month
 ORDER BY p.year, p.month, i.due_date NULLS LAST, i.name, i.id;
+
+-- name: ListOverdueIncome :many
+SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+FROM period_items AS i
+JOIN periods AS p ON p.id = i.period_id
+WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind = 'income'
+ORDER BY p.year, p.month, i.name, i.id;

@@ -18,8 +18,12 @@ type Totals struct {
 	Occasional KindTotal
 	Income     KindTotal
 	CardCharge KindTotal
-	// ToPay is Por pagar: pending fixed + occasional. Done, overdue (D7) and card charge (D3) items
-	// are out of it.
+	// Overdue is the expenses earlier months left unpaid that this month owes (D7): Total is every one
+	// owed here, paid since or not, and Pending the ones still unpaid.
+	Overdue KindTotal
+	// ToPay is Por pagar: pending fixed + occasional of the month plus the overdue expenses it owes
+	// (D7). Done and card charge (D3) items are out of it, and so are this month's own items once
+	// closing made them overdue: the next month owes those.
 	ToPay kernel.Money
 	// ToReceive is Por llegar: pending income. Received and overdue (D7) items are out of it.
 	ToReceive kernel.Money
@@ -27,7 +31,9 @@ type Totals struct {
 
 // ComputeTotals returns ErrTotalOutOfRange rather than a number the contract cannot carry. It checks
 // the sum of every expense too, not only of the pending ones, so that no later toggle can overflow.
-func ComputeTotals(items []Item) (Totals, error) {
+// Owed is the overdue expenses this month owes (D7). Writes bound each month's own items, not what other
+// months leave owed here, so their part stops at kernel.MaxMoney instead of failing.
+func ComputeTotals(items, owed []Item) (Totals, error) {
 	var totals Totals
 	var err error
 	if totals.Fixed, err = totalOf(items, ItemFixed); err != nil {
@@ -50,7 +56,23 @@ func ComputeTotals(items []Item) (Totals, error) {
 		return Totals{}, errors.Join(ErrTotalOutOfRange, err)
 	}
 	totals.ToReceive = totals.Income.Pending
+	totals.Overdue = owedTotal(owed)
+	totals.ToPay = addCapped(totals.ToPay, totals.Overdue.Pending)
 	return totals, nil
+}
+
+func owedTotal(owed []Item) KindTotal {
+	var total KindTotal
+	for _, item := range owed {
+		if !IsExpense(item.Kind) || item.Status == StatusPending {
+			continue
+		}
+		total.Total = addCapped(total.Total, item.Amount)
+		if item.Status == StatusOverdue {
+			total.Pending = addCapped(total.Pending, item.Amount)
+		}
+	}
+	return total
 }
 
 func totalOf(items []Item, kind ItemKind) (KindTotal, error) {
@@ -75,7 +97,8 @@ func totalOf(items []Item, kind ItemKind) (KindTotal, error) {
 	return KindTotal{Total: total, Pending: pendingTotal}, nil
 }
 
-// OverdueTotals are the sums of the overdue list, across every closed month (D7).
+// OverdueTotals are the sums of a month's Overdue section (D7): the unpaid expenses that month owes, and
+// the unreceived income of every closed month.
 type OverdueTotals struct {
 	Expense kernel.Money
 	Income  kernel.Money
@@ -88,7 +111,7 @@ func ComputeOverdueTotals(items []Item) OverdueTotals {
 	var totals OverdueTotals
 	for _, item := range items {
 		switch {
-		case isExpense(item.Kind):
+		case IsExpense(item.Kind):
 			totals.Expense = addCapped(totals.Expense, item.Amount)
 		case item.Kind == ItemIncome:
 			totals.Income = addCapped(totals.Income, item.Amount)

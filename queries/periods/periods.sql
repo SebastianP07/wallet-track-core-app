@@ -26,10 +26,20 @@ SET status = 'closed'
 WHERE id = $1
 RETURNING id, year, month, status, created_at, updated_at;
 
--- name: MarkPendingItemsOverdue :exec
+-- name: MarkPendingIncomeOverdue :exec
 UPDATE period_items
 SET status = 'overdue'
-WHERE period_id = $1 AND status = 'pending' AND kind = ANY(@kinds::text[]);
+WHERE period_id = $1 AND status = 'pending' AND kind = 'income';
+
+-- name: CarryPendingExpenses :exec
+UPDATE period_items
+SET status = 'overdue', owed_year = @owed_year, owed_month = @owed_month
+WHERE period_id = $1 AND status = 'pending' AND kind IN ('fixed', 'occasional');
+
+-- name: CarryOwedExpenses :exec
+UPDATE period_items
+SET owed_year = @to_year, owed_month = @to_month
+WHERE status = 'overdue' AND owed_year = @from_year AND owed_month = @from_month;
 
 -- name: AddItem :exec
 INSERT INTO period_items (period_id, template_id, kind, name, amount, due_date, card_id, tag_id)
