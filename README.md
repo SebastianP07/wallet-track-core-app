@@ -143,6 +143,13 @@ Other operator commands:
   would take down the page where the user fixes it. Writes keep `incoming`, `outgoing` and `balance` within the bound already.
 - A month not opened is a 404, as the contract says, so its balances come from `GET /accounts`.
 - `upcomingDue` is the month's pending fixed and occasional items by due date, then name. Each item carries its urgency (D11).
+- `GET /dashboard/export?period=` downloads the month as CSV: `kind,name,amount,due_date,status,tag`, one row per item of every
+  kind, then one per account with `kind` `account_<kind>` and only a name and balance. Balances are today's in any month, so they
+  are not to be summed with the items, and there are no totals (D1). UTF-8 with a BOM, CRLF, whole pesos as plain integers, and a
+  month not opened is a 404.
+- Every text cell of the export is quoted, and one that a spreadsheet would read as a formula gets a leading `'`, which it then
+  shows as part of the text. So does what follows a `;`, a tab or a line break inside a cell, since Excel in a `;` locale splits
+  there whatever the quotes say. Amounts never get one: a negative balance has to stay a number.
 
 ## Platform behavior worth knowing
 

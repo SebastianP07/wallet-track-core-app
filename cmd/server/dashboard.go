@@ -25,25 +25,36 @@ import (
 	platformsapplication "github.com/SebastianP07/wallet-track-core-app/internal/platforms/application"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/platform"
+	tagspostgres "github.com/SebastianP07/wallet-track-core-app/internal/tags/adapters/postgres"
+	tagsapplication "github.com/SebastianP07/wallet-track-core-app/internal/tags/application"
 )
 
 func newDashboardHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *dashboardhttp.Handler {
 	expenses := expensespostgres.NewRepository(pool)
 	people := platformspostgres.NewRepository(pool)
 	clock := platform.SystemClock{}
+	periods := periodReader{periodsapplication.NewGetPeriod(periodspostgres.NewRepository(pool))}
+	accounts := accountsReader{accountsapplication.NewListAccounts(accountspostgres.NewRepository(pool))}
+	items := itemsReader{
+		list:    expensesapplication.NewListItems(expenses, clock),
+		overdue: expensesapplication.NewListOverdueItems(expenses, clock),
+	}
 	return dashboardhttp.NewHandler(dashboardhttp.Config{
 		Get: dashboardapplication.NewGetDashboard(dashboardapplication.Readers{
-			Periods:  periodReader{periodsapplication.NewGetPeriod(periodspostgres.NewRepository(pool))},
-			Accounts: accountsReader{accountsapplication.NewListAccounts(accountspostgres.NewRepository(pool))},
-			Items: itemsReader{
-				list:    expensesapplication.NewListItems(expenses, clock),
-				overdue: expensesapplication.NewListOverdueItems(expenses, clock),
-			},
-			Cards: cardsReader{cardsapplication.NewGetCardTotals(cardspostgres.NewRepository(pool))},
+			Periods:  periods,
+			Accounts: accounts,
+			Items:    items,
+			Cards:    cardsReader{cardsapplication.NewGetCardTotals(cardspostgres.NewRepository(pool))},
 			Platforms: platformsReader{
 				platforms: platformsapplication.NewListPlatforms(people),
 				people:    platformsapplication.NewListPeople(people),
 			},
+		}),
+		Export: dashboardapplication.NewExportMonth(dashboardapplication.ExportReaders{
+			Periods:  periods,
+			Accounts: accounts,
+			Items:    items,
+			Tags:     tagsReader{tagsapplication.NewListTags(tagspostgres.NewRepository(pool))},
 		}),
 		RequireSession: auth.RequireFullSession,
 		Logger:         logger,
@@ -51,6 +62,22 @@ func newDashboardHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slo
 }
 
 // The readers below carry each module's answer in the Dashboard's types, as memberIncome does for periods.
+
+type tagsReader struct {
+	list *tagsapplication.ListTags
+}
+
+func (r tagsReader) List(ctx context.Context) ([]dashboarddomain.Tag, error) {
+	tags, err := r.list.Execute(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]dashboarddomain.Tag, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, dashboarddomain.Tag{ID: tag.ID, Name: tag.Name})
+	}
+	return names, nil
+}
 
 type periodReader struct {
 	get *periodsapplication.GetPeriod

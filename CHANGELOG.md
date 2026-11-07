@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.15.0 — 2026-11-05 — CSV export
+
+- `GET /dashboard/export?period=` in `internal/dashboard`, behind the full session: `kind,name,amount,due_date,status,tag`, one
+  row per item of the month of every kind, then one per account with `kind` `account_<kind>` and only a name and balance. Balances
+  are today's in any month, so they are kept apart by kind and never summed. No totals (D1). A month not opened is a 404 and a bad
+  `period` a 400, as `GET /dashboard` answers.
+- UTF-8 with a BOM, which Excel needs to read accents, CRLF line ends and whole pesos as plain integers. `Content-Disposition` is
+  `attachment; filename="wallet-track-<YYYY-MM>.csv"`, built from the month already parsed.
+- Formula injection: every text cell is quoted. A cell that starts with a control character, or with `=`, `+`, `-`, `@` or their
+  full-width forms after any blanks, gets a leading `'`, and so does such a character after a `;`, a tab or a line break inside a
+  cell, because a spreadsheet splitting on `;`, the default in Colombia, reads what follows as its own cell. Amounts never get one,
+  so a negative balance stays a number.
+- `ListTags` joins the readers, for the tag names. No new dependency, migration or query. No new automated tests (T7).
+
 ## 0.14.0 — 2026-11-05 — Passkeys and active sessions
 
 - Passkeys in `internal/auth`, with `github.com/go-webauthn/webauthn` v0.18.2 confined to `adapters/passkey` behind the

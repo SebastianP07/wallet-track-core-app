@@ -1718,6 +1718,40 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /dashboard/export:
+    get:
+      operationId: exportDashboardMonth
+      summary: Download a month as CSV
+      tags:
+      - Dashboard
+      description: |
+        Columns: `kind,name,amount,due_date,status,tag`. One row per item of the month, of every kind, then one row per account
+        with `kind` `account_<kind>` and an empty due date, status and tag. Account balances are today's in any month (D6, D9),
+        so they are never to be summed with the items. No totals (D1). UTF-8 with a BOM, CRLF line ends, whole pesos as plain
+        integers. Text cells are always quoted, and one that starts with a control character (tab, CR, LF), or with `=`, `+`, `-`
+        or `@` or their full-width forms after any leading blanks, gets a leading `'` so that a spreadsheet reads it as text. So
+        does such a character after a `;`, a tab or a line break inside a cell, for a spreadsheet that splits there. 404 if the
+        month has not been opened.
+      parameters:
+      - $ref: '#/components/parameters/PeriodQuery'
+      responses:
+        '200':
+          description: The month's items and the accounts.
+          headers:
+            Content-Disposition:
+              description: '`attachment; filename="wallet-track-<YYYY-MM>.csv"`.'
+              schema:
+                type: string
+          content:
+            text/csv:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     sessionCookie:

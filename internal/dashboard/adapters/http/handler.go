@@ -21,7 +21,8 @@ const (
 )
 
 type Config struct {
-	Get *application.GetDashboard
+	Get    *application.GetDashboard
+	Export *application.ExportMonth
 	// RequireSession comes from cmd/, so this module imports no other module's adapters.
 	RequireSession platform.Middleware
 	Logger         *slog.Logger
@@ -37,6 +38,7 @@ func NewHandler(cfg Config) *Handler {
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET "+basePath+"/dashboard", platform.Chain(http.HandlerFunc(h.get), h.RequireSession))
+	mux.Handle("GET "+basePath+"/dashboard/export", platform.Chain(http.HandlerFunc(h.export), h.RequireSession))
 }
 
 type periodResponse struct {
