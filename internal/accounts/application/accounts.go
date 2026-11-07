@@ -61,8 +61,8 @@ func (u *CreateAccount) Execute(ctx context.Context, account domain.NewAccount) 
 		if err != nil {
 			return err
 		}
-		// Only the kind and balance of the new row count toward a total.
-		if _, err := domain.ComputeTotals(append(existing, domain.Account{Kind: account.Kind, Balance: account.Balance})); err != nil {
+		// Only the balance of the new row counts toward the total.
+		if _, err := domain.ComputeTotals(append(existing, domain.Account{Balance: account.Balance})); err != nil {
 			return err
 		}
 		created, err = repo.Create(ctx, account)

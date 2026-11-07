@@ -228,7 +228,8 @@ Then sign in at the origin, with the enrollment secret it printed.
 - `GET /dashboard?period=` is one aggregated read: `kpis`, `toPayBreakdown`, `upcomingDue`, and every section in the shape it
   has at its own endpoint. `internal/dashboard` reaches other modules only through its application ports, wired in
   `cmd/server/dashboard.go`.
-- `currentTotal` and `savings` are today's balances, so a past or closed month shows the same ones as any other (D6, D9).
+- `currentTotal` is the sum of every account's balance today, so a past or closed month shows the same one as any other
+  (D6). Savings is merged into Accounts for now: there is no savings KPI, and the kept `accounts.kind` column is never read (D9).
 - An overdue item of the selected month is in `incoming` and `outgoing`, which read every status (D2), and out of `toPay` and
   `toReceive`, which read only what is pending (D7). The overdue expenses the month owes are in `toPay` while unpaid and in
   `outgoing` paid or not, and in `toPayBreakdown.overdue` (D7). A closed month owes nothing any more, so its `toPay` and
@@ -238,7 +239,7 @@ Then sign in at the origin, with the enrollment secret it printed.
 - A month not opened is a 404, as the contract says, so its balances come from `GET /accounts`.
 - `upcomingDue` is the month's pending fixed and occasional items by due date, then name. Each item carries its urgency (D11).
 - `GET /dashboard/export?period=` downloads the month as CSV: `kind,name,amount,due_date,status,tag`, one row per item of every
-  kind, then one per account with `kind` `account_<kind>` and only a name and balance. Balances are today's in any month, so they
+  kind, then one per account with `kind` `account` and only a name and balance. Balances are today's in any month, so they
   are not to be summed with the items, and there are no totals (D1). UTF-8 with a BOM, CRLF, whole pesos as plain integers, and a
   month not opened is a 404.
 - Every text cell of the export is quoted, and one that a spreadsheet would read as a formula gets a leading `'`, which it then
@@ -331,7 +332,7 @@ Read from the environment; `make` loads `.env` automatically. `.env.example` lis
 | `migrations` | goose SQL migrations |
 | `queries/<module>` | sqlc SQL; each module gets a block in `sqlc.yaml` and generates into `internal/<module>/adapters/postgres/sqlcgen` |
 | `internal/shared/kernel` | Shared value objects: `Money`, bounded to ±(2^53-1), `YearMonth`, from 2000-01 on, with the due day clamp (D11), and `DateInBogota` |
-| `internal/accounts` | Accounts and savings: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
+| `internal/accounts` | Accounts, savings included for now (D9): `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
 | `internal/periods` | Periods and recurring templates: `domain`, `application` (one struct per use case, ports in `ports.go`) and `adapters/{http,postgres}` |
 | `internal/expenses` | A month's items of every kind and their done toggle, with urgency (D11), Por pagar and Por llegar (D1): `domain`, `application` and `adapters/{http,postgres}` |
 | `internal/tags` | Tags (D5): `domain`, `application` and `adapters/{http,postgres}` |

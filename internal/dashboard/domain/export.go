@@ -6,9 +6,9 @@ import (
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
 )
 
-// accountKindPrefix keeps an account row from being read as an item: a balance is today's whichever month is
-// exported (D6, D9), and summing it with the month's items would mean nothing.
-const accountKindPrefix = "account_"
+// accountKind keeps an account row from being read as an item: a balance is today's whichever month is
+// exported (D6), and summing it with the month's items would mean nothing.
+const accountKind = "account"
 
 type Tag struct {
 	ID   string
@@ -47,7 +47,7 @@ func ExportRows(items []Item, accounts []Account, tags []Tag) []ExportRow {
 	}
 	for _, account := range accounts {
 		rows = append(rows, ExportRow{
-			Kind:   accountKindPrefix + account.Kind,
+			Kind:   accountKind,
 			Name:   account.Name,
 			Amount: account.Balance,
 		})

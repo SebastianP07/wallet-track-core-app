@@ -31,7 +31,6 @@ type Period struct {
 type Account struct {
 	ID        string
 	Name      string
-	Kind      string
 	Balance   kernel.Money
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -41,7 +40,6 @@ type Account struct {
 type Accounts struct {
 	Items        []Account
 	CurrentTotal kernel.Money
-	SavingsTotal kernel.Money
 }
 
 type Item struct {
@@ -132,7 +130,7 @@ type Person struct {
 }
 
 // Kpis are the month's numbers. Card charges reach none of them (D3). Balances are today's whichever month
-// is asked about (D6, D9). The overdue expenses this month owes are in ToPay while unpaid and in Outgoing
+// is asked about, and every account counts toward CurrentTotal (D6, D9). The overdue expenses this month owes are in ToPay while unpaid and in Outgoing
 // whatever their status, like its own expenses (D2, D7). This month's own items that closing made overdue
 // stay in Incoming and Outgoing, which read every status, and leave ToPay and ToReceive: the next month
 // owes those expenses, and overdue income counts toward no month's totals.
@@ -141,7 +139,6 @@ type Kpis struct {
 	ToPay        kernel.Money
 	ToReceive    kernel.Money
 	Surplus      kernel.Money
-	Savings      kernel.Money
 	Incoming     kernel.Money
 	Outgoing     kernel.Money
 	Balance      kernel.Money
@@ -164,7 +161,6 @@ func ComputeKpis(accounts Accounts, totals ItemTotals) Kpis {
 		ToPay:        totals.ToPay,
 		ToReceive:    totals.ToReceive,
 		Surplus:      withinBound(accounts.CurrentTotal - totals.ToPay + totals.ToReceive),
-		Savings:      accounts.SavingsTotal,
 		Incoming:     totals.Income.Total,
 		Outgoing:     withinBound(outgoing),
 		Balance:      withinBound(totals.Income.Total - outgoing),

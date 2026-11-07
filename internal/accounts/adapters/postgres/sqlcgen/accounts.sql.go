@@ -12,24 +12,30 @@ import (
 )
 
 const createAccount = `-- name: CreateAccount :one
-INSERT INTO accounts (name, kind, balance)
-VALUES ($1, $2, $3)
-RETURNING id, name, kind, balance, created_at, updated_at
+INSERT INTO accounts (name, balance)
+VALUES ($1, $2)
+RETURNING id, name, balance, created_at, updated_at
 `
 
 type CreateAccountParams struct {
 	Name    string
-	Kind    string
 	Balance int64
 }
 
-func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (Account, error) {
-	row := q.db.QueryRow(ctx, createAccount, arg.Name, arg.Kind, arg.Balance)
-	var i Account
+type CreateAccountRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Balance   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (CreateAccountRow, error) {
+	row := q.db.QueryRow(ctx, createAccount, arg.Name, arg.Balance)
+	var i CreateAccountRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Kind,
 		&i.Balance,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -48,18 +54,25 @@ func (q *Queries) DeleteAccount(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, name, kind, balance, created_at, updated_at
+SELECT id, name, balance, created_at, updated_at
 FROM accounts
 WHERE id = $1
 `
 
-func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (Account, error) {
+type GetAccountRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Balance   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (GetAccountRow, error) {
 	row := q.db.QueryRow(ctx, getAccount, id)
-	var i Account
+	var i GetAccountRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Kind,
 		&i.Balance,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -68,24 +81,33 @@ func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (Account, erro
 }
 
 const listAccounts = `-- name: ListAccounts :many
-SELECT id, name, kind, balance, created_at, updated_at
+
+SELECT id, name, balance, created_at, updated_at
 FROM accounts
 ORDER BY name, id
 `
 
-func (q *Queries) ListAccounts(ctx context.Context) ([]Account, error) {
+type ListAccountsRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Balance   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+// The kind column is kept but never read or written while savings is merged into Accounts (D9).
+func (q *Queries) ListAccounts(ctx context.Context) ([]ListAccountsRow, error) {
 	rows, err := q.db.Query(ctx, listAccounts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Account
+	var items []ListAccountsRow
 	for rows.Next() {
-		var i Account
+		var i ListAccountsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
-			&i.Kind,
 			&i.Balance,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -111,30 +133,31 @@ func (q *Queries) LockAccountWrites(ctx context.Context) error {
 
 const updateAccount = `-- name: UpdateAccount :one
 UPDATE accounts
-SET name = $2, kind = $3, balance = $4
+SET name = $2, balance = $3
 WHERE id = $1
-RETURNING id, name, kind, balance, created_at, updated_at
+RETURNING id, name, balance, created_at, updated_at
 `
 
 type UpdateAccountParams struct {
 	ID      pgtype.UUID
 	Name    string
-	Kind    string
 	Balance int64
 }
 
-func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (Account, error) {
-	row := q.db.QueryRow(ctx, updateAccount,
-		arg.ID,
-		arg.Name,
-		arg.Kind,
-		arg.Balance,
-	)
-	var i Account
+type UpdateAccountRow struct {
+	ID        pgtype.UUID
+	Name      string
+	Balance   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateAccount(ctx context.Context, arg UpdateAccountParams) (UpdateAccountRow, error) {
+	row := q.db.QueryRow(ctx, updateAccount, arg.ID, arg.Name, arg.Balance)
+	var i UpdateAccountRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Kind,
 		&i.Balance,
 		&i.CreatedAt,
 		&i.UpdatedAt,

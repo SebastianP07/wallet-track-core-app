@@ -61,19 +61,18 @@ func (r *Repository) Get(ctx context.Context, id string) (domain.Account, error)
 		return domain.Account{}, err
 	}
 	row, err := r.queries.GetAccount(ctx, uuid)
-	return toDomainOrNotFound(row, err)
+	return toDomainOrNotFound(sqlcgen.ListAccountsRow(row), err)
 }
 
 func (r *Repository) Create(ctx context.Context, account domain.NewAccount) (domain.Account, error) {
 	row, err := r.queries.CreateAccount(ctx, sqlcgen.CreateAccountParams{
 		Name:    account.Name,
-		Kind:    string(account.Kind),
 		Balance: int64(account.Balance),
 	})
 	if err != nil {
 		return domain.Account{}, err
 	}
-	return toDomain(row), nil
+	return toDomain(sqlcgen.ListAccountsRow(row)), nil
 }
 
 func (r *Repository) Update(ctx context.Context, account domain.Account) (domain.Account, error) {
@@ -84,10 +83,9 @@ func (r *Repository) Update(ctx context.Context, account domain.Account) (domain
 	row, err := r.queries.UpdateAccount(ctx, sqlcgen.UpdateAccountParams{
 		ID:      uuid,
 		Name:    account.Name,
-		Kind:    string(account.Kind),
 		Balance: int64(account.Balance),
 	})
-	return toDomainOrNotFound(row, err)
+	return toDomainOrNotFound(sqlcgen.ListAccountsRow(row), err)
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {
@@ -110,7 +108,7 @@ func parseID(id string) (pgtype.UUID, error) {
 	return uuid, nil
 }
 
-func toDomainOrNotFound(row sqlcgen.Account, err error) (domain.Account, error) {
+func toDomainOrNotFound(row sqlcgen.ListAccountsRow, err error) (domain.Account, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Account{}, domain.ErrNotFound
 	}
@@ -120,11 +118,11 @@ func toDomainOrNotFound(row sqlcgen.Account, err error) (domain.Account, error) 
 	return toDomain(row), nil
 }
 
-func toDomain(row sqlcgen.Account) domain.Account {
+// toDomain reads every query's row: they all select the same columns.
+func toDomain(row sqlcgen.ListAccountsRow) domain.Account {
 	return domain.Account{
 		ID:        row.ID.String(),
 		Name:      row.Name,
-		Kind:      domain.Kind(row.Kind),
 		Balance:   kernel.Money(row.Balance),
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,

@@ -68,7 +68,6 @@ func (h *Handler) Register(mux *http.ServeMux) {
 type accountResponse struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
 	Balance   int64     `json:"balance"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -77,14 +76,12 @@ type accountResponse struct {
 type accountListResponse struct {
 	Items        []accountResponse `json:"items"`
 	CurrentTotal int64             `json:"currentTotal"`
-	SavingsTotal int64             `json:"savingsTotal"`
 }
 
 // accountBody keeps each field raw, so that a wrong type or a null is reported on its own field
 // and an absent field can be told apart from a null one.
 type accountBody struct {
 	Name    json.RawMessage `json:"name"`
-	Kind    json.RawMessage `json:"kind"`
 	Balance json.RawMessage `json:"balance"`
 }
 
@@ -92,7 +89,6 @@ func toResponse(account domain.Account) accountResponse {
 	return accountResponse{
 		ID:        account.ID,
 		Name:      account.Name,
-		Kind:      string(account.Kind),
 		Balance:   int64(account.Balance),
 		CreatedAt: account.CreatedAt,
 		UpdatedAt: account.UpdatedAt,
@@ -112,7 +108,6 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	platform.WriteJSON(w, http.StatusOK, accountListResponse{
 		Items:        items,
 		CurrentTotal: int64(list.Totals.Current),
-		SavingsTotal: int64(list.Totals.Savings),
 	})
 }
 
@@ -137,7 +132,6 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	var fields []platform.FieldError
 	name := requiredString(body.Name, "name", &fields)
-	kind := requiredString(body.Kind, "kind", &fields)
 	var balance int64
 	if value := optionalBalance(body.Balance, &fields); value != nil {
 		balance = *value
@@ -146,7 +140,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, fields...)
 		return
 	}
-	account, err := domain.CreateNewAccount(name, kind, balance)
+	account, err := domain.CreateNewAccount(name, balance)
 	if err != nil {
 		h.writeError(w, r, err)
 		return
@@ -169,19 +163,18 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w)
 		return
 	}
-	if body.Name == nil && body.Kind == nil && body.Balance == nil {
-		platform.WriteProblem(w, http.StatusBadRequest, "Send at least one of name, kind or balance.")
+	if body.Name == nil && body.Balance == nil {
+		platform.WriteProblem(w, http.StatusBadRequest, "Send at least one of name or balance.")
 		return
 	}
 	var fields []platform.FieldError
 	name := optionalString(body.Name, "name", &fields)
-	kind := optionalString(body.Kind, "kind", &fields)
 	balance := optionalBalance(body.Balance, &fields)
 	if len(fields) > 0 {
 		writeBadRequest(w, fields...)
 		return
 	}
-	changes, err := domain.NewChanges(name, kind, balance)
+	changes, err := domain.NewChanges(name, balance)
 	if err != nil {
 		h.writeError(w, r, err)
 		return

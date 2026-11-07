@@ -3,12 +3,12 @@
 -- Rows use fixed ids and ON CONFLICT DO NOTHING, so re-running changes nothing and
 -- never overwrites edits made through the app.
 
-INSERT INTO accounts (id, name, kind, balance) VALUES
-  ('a0000000-0000-4000-8000-000000000001', 'Main Checking', 'bank', 3250000),
-  ('a0000000-0000-4000-8000-000000000002', 'Digital Wallet', 'wallet', 480000),
-  ('a0000000-0000-4000-8000-000000000003', 'Pocket Cash', 'cash', 120000),
-  ('a0000000-0000-4000-8000-000000000004', 'Meal Card', 'food_card', -15000),
-  ('a0000000-0000-4000-8000-000000000005', 'Emergency Fund', 'savings', 5000000)
+INSERT INTO accounts (id, name, balance) VALUES
+  ('a0000000-0000-4000-8000-000000000001', 'Main Checking', 3250000),
+  ('a0000000-0000-4000-8000-000000000002', 'Digital Wallet', 480000),
+  ('a0000000-0000-4000-8000-000000000003', 'Pocket Cash', 120000),
+  ('a0000000-0000-4000-8000-000000000004', 'Meal Card', -15000),
+  ('a0000000-0000-4000-8000-000000000005', 'Emergency Fund', 5000000)
 ON CONFLICT DO NOTHING;
 
 INSERT INTO credit_cards (id, name, issuer, statement_day, due_day) VALUES

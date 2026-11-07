@@ -114,13 +114,12 @@ func (r accountsReader) List(ctx context.Context) (dashboarddomain.Accounts, err
 		items = append(items, dashboarddomain.Account{
 			ID:        account.ID,
 			Name:      account.Name,
-			Kind:      string(account.Kind),
 			Balance:   account.Balance,
 			CreatedAt: account.CreatedAt,
 			UpdatedAt: account.UpdatedAt,
 		})
 	}
-	return dashboarddomain.Accounts{Items: items, CurrentTotal: list.Totals.Current, SavingsTotal: list.Totals.Savings}, nil
+	return dashboarddomain.Accounts{Items: items, CurrentTotal: list.Totals.Current}, nil
 }
 
 type itemsReader struct {

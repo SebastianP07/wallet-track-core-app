@@ -24,7 +24,7 @@ tags:
 - name: Auth
   description: Password, TOTP, passkeys, MFA enrollment, recovery codes and sessions.
 - name: Accounts
-  description: Where money sits, including savings (D6, D9).
+  description: Where money sits now. Every account counts toward Total actual (D6, D9).
 - name: Periods
   description: 'Monthly periods: open, close, list (D7).'
 - name: Period items
@@ -1742,7 +1742,7 @@ paths:
       - Dashboard
       description: |
         Columns: `kind,name,amount,due_date,status,tag`. One row per item of the month, of every kind, then one row per account
-        with `kind` `account_<kind>` and an empty due date, status and tag. Account balances are today's in any month (D6, D9),
+        with `kind` `account` and an empty due date, status and tag. Account balances are today's in any month (D6),
         so they are never to be summed with the items. No totals (D1). UTF-8 with a BOM, CRLF line ends, whole pesos as plain
         integers. Text cells are always quoted, and one that starts with a control character (tab, CR, LF), or with `=`, `+`, `-`
         or `@` or their full-width forms after any leading blanks, gets a leading `'` so that a spreadsheet reads it as text. So
@@ -2394,21 +2394,11 @@ components:
           items:
             $ref: '#/components/schemas/Session'
       additionalProperties: false
-    AccountKind:
-      type: string
-      enum:
-      - bank
-      - wallet
-      - cash
-      - food_card
-      - savings
-      description: '`savings` accounts count toward Savings instead of Current total (D9).'
     Account:
       type: object
       required:
       - id
       - name
-      - kind
       - balance
       - createdAt
       - updatedAt
@@ -2417,8 +2407,6 @@ components:
           $ref: '#/components/schemas/Id'
         name:
           $ref: '#/components/schemas/Name'
-        kind:
-          $ref: '#/components/schemas/AccountKind'
         balance:
           $ref: '#/components/schemas/Money'
         createdAt:
@@ -2430,12 +2418,9 @@ components:
       type: object
       required:
       - name
-      - kind
       properties:
         name:
           $ref: '#/components/schemas/Name'
-        kind:
-          $ref: '#/components/schemas/AccountKind'
         balance:
           $ref: '#/components/schemas/Money'
       additionalProperties: false
@@ -2444,8 +2429,6 @@ components:
       properties:
         name:
           $ref: '#/components/schemas/Name'
-        kind:
-          $ref: '#/components/schemas/AccountKind'
         balance:
           $ref: '#/components/schemas/Money'
       additionalProperties: false
@@ -2455,7 +2438,6 @@ components:
       required:
       - items
       - currentTotal
-      - savingsTotal
       properties:
         items:
           type: array
@@ -2464,11 +2446,7 @@ components:
         currentTotal:
           allOf:
           - $ref: '#/components/schemas/Money'
-          description: 'Total actual: sum of non-savings balances (D6, D9).'
-        savingsTotal:
-          allOf:
-          - $ref: '#/components/schemas/Money'
-          description: 'Ahorro: sum of savings balances (D9).'
+          description: 'Total actual: sum of every account''s balance (D6, D9).'
       additionalProperties: false
     PeriodStatus:
       type: string
@@ -3338,7 +3316,6 @@ components:
       - toPay
       - toReceive
       - surplus
-      - savings
       - incoming
       - outgoing
       - balance
@@ -3346,7 +3323,7 @@ components:
         currentTotal:
           allOf:
           - $ref: '#/components/schemas/Money'
-          description: 'Total actual: sum of non-savings balances now (D6, D9).'
+          description: 'Total actual: sum of every account''s balance now (D6, D9).'
         toPay:
           allOf:
           - $ref: '#/components/schemas/NonNegativeMoney'
@@ -3362,10 +3339,6 @@ components:
           - $ref: '#/components/schemas/Money'
           description: 'Sobrante: currentTotal - toPay + toReceive, stopping at the money bound in either direction.
             Writes bound balances and items apart, not this sum.'
-        savings:
-          allOf:
-          - $ref: '#/components/schemas/Money'
-          description: 'Ahorro: sum of savings balances now (D9).'
         incoming:
           allOf:
           - $ref: '#/components/schemas/NonNegativeMoney'

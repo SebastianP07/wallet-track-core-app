@@ -54,7 +54,6 @@ type kpisResponse struct {
 	ToPay        int64 `json:"toPay"`
 	ToReceive    int64 `json:"toReceive"`
 	Surplus      int64 `json:"surplus"`
-	Savings      int64 `json:"savings"`
 	Incoming     int64 `json:"incoming"`
 	Outgoing     int64 `json:"outgoing"`
 	Balance      int64 `json:"balance"`
@@ -69,7 +68,6 @@ type toPayBreakdownResponse struct {
 type accountResponse struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
 	Balance   int64     `json:"balance"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -78,7 +76,6 @@ type accountResponse struct {
 type accountListResponse struct {
 	Items        []accountResponse `json:"items"`
 	CurrentTotal int64             `json:"currentTotal"`
-	SavingsTotal int64             `json:"savingsTotal"`
 }
 
 type itemResponse struct {
@@ -230,7 +227,6 @@ func toResponse(d application.Dashboard) dashboardResponse {
 			ToPay:        int64(d.Kpis.ToPay),
 			ToReceive:    int64(d.Kpis.ToReceive),
 			Surplus:      int64(d.Kpis.Surplus),
-			Savings:      int64(d.Kpis.Savings),
 			Incoming:     int64(d.Kpis.Incoming),
 			Outgoing:     int64(d.Kpis.Outgoing),
 			Balance:      int64(d.Kpis.Balance),
@@ -260,7 +256,6 @@ func toAccounts(accounts domain.Accounts) accountListResponse {
 		items = append(items, accountResponse{
 			ID:        account.ID,
 			Name:      account.Name,
-			Kind:      account.Kind,
 			Balance:   int64(account.Balance),
 			CreatedAt: account.CreatedAt,
 			UpdatedAt: account.UpdatedAt,
@@ -269,7 +264,6 @@ func toAccounts(accounts domain.Accounts) accountListResponse {
 	return accountListResponse{
 		Items:        items,
 		CurrentTotal: int64(accounts.CurrentTotal),
-		SavingsTotal: int64(accounts.SavingsTotal),
 	}
 }
 

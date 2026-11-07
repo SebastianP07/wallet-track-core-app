@@ -1,23 +1,25 @@
+-- The kind column is kept but never read or written while savings is merged into Accounts (D9).
+
 -- name: ListAccounts :many
-SELECT id, name, kind, balance, created_at, updated_at
+SELECT id, name, balance, created_at, updated_at
 FROM accounts
 ORDER BY name, id;
 
 -- name: GetAccount :one
-SELECT id, name, kind, balance, created_at, updated_at
+SELECT id, name, balance, created_at, updated_at
 FROM accounts
 WHERE id = $1;
 
 -- name: CreateAccount :one
-INSERT INTO accounts (name, kind, balance)
-VALUES ($1, $2, $3)
-RETURNING id, name, kind, balance, created_at, updated_at;
+INSERT INTO accounts (name, balance)
+VALUES ($1, $2)
+RETURNING id, name, balance, created_at, updated_at;
 
 -- name: UpdateAccount :one
 UPDATE accounts
-SET name = $2, kind = $3, balance = $4
+SET name = $2, balance = $3
 WHERE id = $1
-RETURNING id, name, kind, balance, created_at, updated_at;
+RETURNING id, name, balance, created_at, updated_at;
 
 -- name: DeleteAccount :exec
 DELETE FROM accounts

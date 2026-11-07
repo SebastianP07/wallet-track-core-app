@@ -11,6 +11,11 @@
 - Totals: a month's `overdue` total (owed here: total and unpaid) joins Por pagar and Se va, and the Dashboard's To pay
   breakdown (D1, D2). Contract: `owedIn` on `PeriodItem`, `overdue` in `PeriodItemTotals` and `ToPayBreakdown`, and
   `GET /periods/{period}/overdue-items` replaces `GET /overdue-items`. sqlc regenerated. No new automated tests (T7).
+- D9 rewritten: savings is merged into Accounts for now. `accounts.ComputeTotals` sums every balance into Total actual;
+  `Kind`, `Totals.Savings`, the dashboard `Kpis.Savings` and `Accounts.SavingsTotal` are removed. Contract: `AccountKind`,
+  `kind` on `Account`/`AccountCreate`/`AccountUpdate`, `AccountList.savingsTotal` and `DashboardKpis.savings` removed; the
+  CSV export labels account rows `account`. Migration `00010_accounts_without_kind.sql` sets `accounts.kind` default `bank`
+  and keeps the column and its values; queries no longer read or write it (sqlc regenerated). Seed no longer sets a kind.
 
 ## 0.16.0 — 2026-11-07 — Production-like local stack
 

@@ -1,4 +1,5 @@
-// Package domain holds the rules of accounts and savings (D6, D9).
+// Package domain holds the rules of accounts (D6). Savings is merged into Accounts for now (D9): every
+// account is money available now, and the app reads no account kind.
 package domain
 
 import (
@@ -15,7 +16,7 @@ const nameMaxChars = 120
 
 var (
 	ErrNotFound = errors.New("account not found")
-	// ErrTotalOutOfRange means a change would take Total actual or Ahorro beyond kernel.MaxMoney.
+	// ErrTotalOutOfRange means a change would take Total actual beyond kernel.MaxMoney.
 	ErrTotalOutOfRange = errors.New("account total out of range")
 )
 
@@ -34,29 +35,9 @@ func (e *ValidationError) Error() string {
 	return "account values are not valid"
 }
 
-type Kind string
-
-const (
-	KindBank     Kind = "bank"
-	KindWallet   Kind = "wallet"
-	KindCash     Kind = "cash"
-	KindFoodCard Kind = "food_card"
-	KindSavings  Kind = "savings"
-)
-
-func parseKind(raw string) (Kind, bool) {
-	switch kind := Kind(raw); kind {
-	case KindBank, KindWallet, KindCash, KindFoodCard, KindSavings:
-		return kind, true
-	default:
-		return "", false
-	}
-}
-
 type Account struct {
 	ID        string
 	Name      string
-	Kind      Kind
 	Balance   kernel.Money
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -65,18 +46,16 @@ type Account struct {
 // NewAccount is a valid account that has not been stored yet.
 type NewAccount struct {
 	Name    string
-	Kind    Kind
 	Balance kernel.Money
 }
 
 // CreateNewAccount validates the values of a new account.
-func CreateNewAccount(name, kind string, balance int64) (NewAccount, error) {
+func CreateNewAccount(name string, balance int64) (NewAccount, error) {
 	var (
 		account    NewAccount
 		violations []Violation
 	)
 	account.Name, violations = checkName(name, violations)
-	account.Kind, violations = checkKind(kind, violations)
 	account.Balance, violations = checkBalance(balance, violations)
 	if len(violations) > 0 {
 		return NewAccount{}, &ValidationError{Violations: violations}
@@ -87,12 +66,11 @@ func CreateNewAccount(name, kind string, balance int64) (NewAccount, error) {
 // Changes are the validated fields of an edit; nil leaves a field as it is.
 type Changes struct {
 	name    *string
-	kind    *Kind
 	balance *kernel.Money
 }
 
 // NewChanges validates an edit. The balance is only ever typed by the user (D6).
-func NewChanges(name, kind *string, balance *int64) (Changes, error) {
+func NewChanges(name *string, balance *int64) (Changes, error) {
 	var (
 		changes    Changes
 		violations []Violation
@@ -101,11 +79,6 @@ func NewChanges(name, kind *string, balance *int64) (Changes, error) {
 		var checked string
 		checked, violations = checkName(*name, violations)
 		changes.name = &checked
-	}
-	if kind != nil {
-		var checked Kind
-		checked, violations = checkKind(*kind, violations)
-		changes.kind = &checked
 	}
 	if balance != nil {
 		var checked kernel.Money
@@ -122,9 +95,6 @@ func NewChanges(name, kind *string, balance *int64) (Changes, error) {
 func (c Changes) ApplyTo(account Account) Account {
 	if c.name != nil {
 		account.Name = *c.name
-	}
-	if c.kind != nil {
-		account.Kind = *c.kind
 	}
 	if c.balance != nil {
 		account.Balance = *c.balance
@@ -145,14 +115,6 @@ func checkName(raw string, violations []Violation) (string, []Violation) {
 	return name, violations
 }
 
-func checkKind(raw string, violations []Violation) (Kind, []Violation) {
-	kind, ok := parseKind(raw)
-	if !ok {
-		return "", append(violations, Violation{Field: "kind", Message: "must be one of bank, wallet, cash, food_card, savings"})
-	}
-	return kind, violations
-}
-
 // BalanceOutOfRangeMessage is the one wording of the bound, also for values too large to reach the domain.
 const BalanceOutOfRangeMessage = "must be whole pesos between -9007199254740991 and 9007199254740991"
 
@@ -164,31 +126,21 @@ func checkBalance(raw int64, violations []Violation) (kernel.Money, []Violation)
 	return balance, violations
 }
 
-// Totals are the two sums the backend owes the frontend (D1).
+// Totals are the sums the backend owes the frontend (D1).
 type Totals struct {
-	// Current is Total actual: the sum of non-savings balances (D6, D9).
+	// Current is Total actual: the sum of every account's balance (D6, D9).
 	Current kernel.Money
-	// Savings is Ahorro: the sum of savings balances (D9).
-	Savings kernel.Money
 }
 
 // ComputeTotals returns ErrTotalOutOfRange rather than a number the contract cannot carry.
 func ComputeTotals(accounts []Account) (Totals, error) {
-	var current, savings []kernel.Money
+	balances := make([]kernel.Money, 0, len(accounts))
 	for _, account := range accounts {
-		if account.Kind == KindSavings {
-			savings = append(savings, account.Balance)
-		} else {
-			current = append(current, account.Balance)
-		}
+		balances = append(balances, account.Balance)
 	}
-	currentTotal, err := kernel.SumMoney(current)
+	current, err := kernel.SumMoney(balances)
 	if err != nil {
 		return Totals{}, errors.Join(ErrTotalOutOfRange, err)
 	}
-	savingsTotal, err := kernel.SumMoney(savings)
-	if err != nil {
-		return Totals{}, errors.Join(ErrTotalOutOfRange, err)
-	}
-	return Totals{Current: currentTotal, Savings: savingsTotal}, nil
+	return Totals{Current: current}, nil
 }
