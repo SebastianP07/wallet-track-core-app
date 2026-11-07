@@ -36,6 +36,11 @@ INSERT INTO period_items (period_id, kind, name, amount, due_date, card_id, tag_
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id;
 
+-- name: SetItemTemplate :execrows
+UPDATE period_items
+SET template_id = $2
+WHERE id = $1;
+
 -- name: UpdateItem :execrows
 UPDATE period_items
 SET name = $2, amount = $3, due_date = $4, card_id = $5, tag_id = $6

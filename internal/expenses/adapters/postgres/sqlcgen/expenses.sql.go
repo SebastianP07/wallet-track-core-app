@@ -489,6 +489,25 @@ func (q *Queries) SetItemStatus(ctx context.Context, arg SetItemStatusParams) (i
 	return result.RowsAffected(), nil
 }
 
+const setItemTemplate = `-- name: SetItemTemplate :execrows
+UPDATE period_items
+SET template_id = $2
+WHERE id = $1
+`
+
+type SetItemTemplateParams struct {
+	ID         pgtype.UUID
+	TemplateID pgtype.UUID
+}
+
+func (q *Queries) SetItemTemplate(ctx context.Context, arg SetItemTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setItemTemplate, arg.ID, arg.TemplateID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateItem = `-- name: UpdateItem :execrows
 UPDATE period_items
 SET name = $2, amount = $3, due_date = $4, card_id = $5, tag_id = $6

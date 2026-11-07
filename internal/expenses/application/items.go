@@ -147,6 +147,15 @@ func (u *CreateItem) Execute(ctx context.Context, month kernel.YearMonth, item d
 			return err
 		}
 		created, err = repo.CreateItem(ctx, period.ID, item)
+		if err != nil || !item.RepeatsMonthly {
+			return err
+		}
+		// The item goes first, so its own rules, such as an existing tag, answer before the template's.
+		templateID, err := repo.Templates().CreateFor(ctx, string(item.Kind), item.Name, item.Amount, dueDayOf(item), item.TagID)
+		if err != nil {
+			return fmt.Errorf("create template: %w", err)
+		}
+		created, err = repo.SetItemTemplate(ctx, created.ID, templateID)
 		return err
 	})
 	if err != nil {
@@ -206,10 +215,24 @@ func NewDeleteItem(tx TxManager) *DeleteItem {
 	return &DeleteItem{tx: tx}
 }
 
-func (u *DeleteItem) Execute(ctx context.Context, id string) error {
+// Execute removes the item from its own month only. With stopRepeating it also deactivates the item's
+// template in the same transaction, so months opened from now on stop getting it. Items of other months,
+// paid or not, stay as they are. An overdue item leaves the totals of the month that owed it (D1, D7).
+func (u *DeleteItem) Execute(ctx context.Context, id string, stopRepeating bool) error {
 	return u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
 		if _, err := repo.LockPeriodOfItem(ctx, id); err != nil {
 			return err
+		}
+		if stopRepeating {
+			item, err := repo.GetItem(ctx, id)
+			if err != nil {
+				return err
+			}
+			if item.TemplateID != nil {
+				if err := repo.Templates().Stop(ctx, *item.TemplateID); err != nil {
+					return fmt.Errorf("stop template: %w", err)
+				}
+			}
 		}
 		found, err := repo.DeleteItem(ctx, id)
 		if err != nil {
@@ -322,6 +345,15 @@ func firstMonthNotClosed(ctx context.Context, repo Repository, from kernel.YearM
 		}
 		return period.Status == domain.PeriodClosed, err
 	})
+}
+
+// dueDayOf is the day of the month a fixed item's template keeps (D11). Other kinds have none.
+func dueDayOf(item domain.NewItem) *int {
+	if item.Kind != domain.ItemFixed || item.DueDate == nil {
+		return nil
+	}
+	day := item.DueDate.Day()
+	return &day
 }
 
 // checkTotals bounds a month's own items. What other months leave owed in it is capped instead (D7).

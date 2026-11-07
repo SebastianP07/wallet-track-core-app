@@ -16,6 +16,11 @@
   `kind` on `Account`/`AccountCreate`/`AccountUpdate`, `AccountList.savingsTotal` and `DashboardKpis.savings` removed; the
   CSV export labels account rows `account`. Migration `00010_accounts_without_kind.sql` sets `accounts.kind` default `bank`
   and keeps the column and its values; queries no longer read or write it (sqlc regenerated). Seed no longer sets a kind.
+- Repeating items: `ExpenseItemCreate` and `IncomeItemCreate` take `repeatsMonthly` (fixed and income only; occasional
+  returns 400). In the item's transaction, the expenses module creates the template through a new `Templates` port served
+  by `periods/application.ItemTemplates` (wired in `cmd/server`), then links the item (`SetItemTemplate` query, sqlc
+  regenerated). `DELETE /period-items/{id}?stopRepeating=true` also deactivates the item's template in the same
+  transaction; the template is kept. Edits refuse `repeatsMonthly`. No migration: `period_items.template_id` already existed.
 
 ## 0.16.0 — 2026-11-07 — Production-like local stack
 

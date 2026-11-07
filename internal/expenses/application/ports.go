@@ -30,6 +30,8 @@ type Repository interface {
 	ListOverdueIncome(ctx context.Context) ([]domain.Item, error)
 	GetItem(ctx context.Context, id string) (domain.Item, error)
 	CreateItem(ctx context.Context, periodID string, item domain.NewItem) (domain.Item, error)
+	// SetItemTemplate links an item to the template that repeats it.
+	SetItemTemplate(ctx context.Context, itemID, templateID string) (domain.Item, error)
 	UpdateItem(ctx context.Context, item domain.Item) (domain.Item, error)
 	SetItemStatus(ctx context.Context, item domain.Item) (domain.Item, error)
 	DeleteItem(ctx context.Context, id string) (found bool, err error)
@@ -37,6 +39,8 @@ type Repository interface {
 	GetMemberItem(ctx context.Context, personID string, month kernel.YearMonth) (domain.Item, error)
 	// MemberPayments works inside this repository's transaction. Only a repository from WithinTx has it.
 	MemberPayments() MemberPayments
+	// Templates works inside this repository's transaction. Only a repository from WithinTx has it.
+	Templates() Templates
 }
 
 // MemberPayments is what this module asks of the platforms module when a person-linked income item is
@@ -45,6 +49,18 @@ type Repository interface {
 type MemberPayments interface {
 	RecordForItem(ctx context.Context, personID, itemID string, month kernel.YearMonth) error
 	RemoveForItem(ctx context.Context, itemID string) error
+}
+
+// Templates is what this module asks of the periods module when an item is added to repeat monthly, or
+// removed to stop repeating, so that the item and its template change together. It only knows templates
+// of fixed and income items, the kinds that have them.
+type Templates interface {
+	// CreateFor stores an active template that clones the item into every month opened from now on.
+	// dueDay is set only on a fixed item.
+	CreateFor(ctx context.Context, kind, name string, amount kernel.Money, dueDay *int, tagID *string) (string, error)
+	// Stop deactivates a template, so that no month opened from now on gets its item. One already inactive
+	// or deleted is no error. Items it created stay as they are.
+	Stop(ctx context.Context, id string) error
 }
 
 type TxManager interface {

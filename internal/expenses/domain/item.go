@@ -30,6 +30,7 @@ var (
 	incomeDueDateViolation     = Violation{Field: "dueDate", Message: "income items have no due date"}
 	cardChargeDueDateViolation = Violation{Field: "dueDate", Message: "card charge items have no due date"}
 	cardOnlyOnChargeViolation  = Violation{Field: "cardId", Message: "only card charge items have a card"}
+	repeatsOnlyFixedOrIncome   = Violation{Field: "repeatsMonthly", Message: "only fixed and income items can repeat monthly"}
 )
 
 var (
@@ -207,23 +208,26 @@ type NewItemInput struct {
 	DueDate *string
 	CardID  OptionalID
 	TagID   *string
+	// RepeatsMonthly asks for a recurring template that clones the item into every month opened later.
+	RepeatsMonthly bool
 }
 
 // NewItem is a valid pending item that has not been stored yet. Only expenses have a DueDate, and
-// only card charges a CardID.
+// only card charges a CardID. Only fixed and income items can repeat monthly, as only they have templates.
 type NewItem struct {
-	Kind    ItemKind
-	Name    string
-	Amount  kernel.Money
-	DueDate *time.Time
-	CardID  *string
-	TagID   *string
+	Kind           ItemKind
+	Name           string
+	Amount         kernel.Money
+	DueDate        *time.Time
+	CardID         *string
+	TagID          *string
+	RepeatsMonthly bool
 }
 
 // CreateNewItem validates a new item.
 func CreateNewItem(input NewItemInput) (NewItem, error) {
 	var violations []Violation
-	item := NewItem{TagID: input.TagID}
+	item := NewItem{TagID: input.TagID, RepeatsMonthly: input.RepeatsMonthly}
 	kind := ItemKind(input.Kind)
 	switch {
 	case IsExpense(kind):
@@ -248,6 +252,9 @@ func CreateNewItem(input NewItemInput) (NewItem, error) {
 	}
 	if input.CardID.Set && kind != ItemCardCharge {
 		violations = append(violations, cardOnlyOnChargeViolation)
+	}
+	if input.RepeatsMonthly && kind != ItemFixed && kind != ItemIncome {
+		violations = append(violations, repeatsOnlyFixedOrIncome)
 	}
 	item.Name, violations = checkName(input.Name, violations)
 	item.Amount, violations = checkAmount(input.Amount, violations)

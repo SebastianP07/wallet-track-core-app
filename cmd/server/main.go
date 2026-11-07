@@ -262,7 +262,7 @@ func newCardsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Lo
 
 func newExpensesHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *expenseshttp.Handler {
 	repo := expensespostgres.NewRepository(pool)
-	tx := expensespostgres.NewTxManager(pool, memberPaymentsInTx)
+	tx := expensespostgres.NewTxManager(pool, memberPaymentsInTx, itemTemplatesInTx)
 	clock := platform.SystemClock{}
 	return expenseshttp.NewHandler(expenseshttp.Config{
 		UseCases: expenseshttp.UseCases{
@@ -332,6 +332,10 @@ func memberIncomeInTx(tx pgx.Tx) periodsapplication.MemberIncome {
 
 func memberPaymentsInTx(tx pgx.Tx) expensesapplication.MemberPayments {
 	return platformsapplication.NewItemPayments(platformspostgres.NewRepositoryInTx(tx), platform.SystemClock{})
+}
+
+func itemTemplatesInTx(tx pgx.Tx) expensesapplication.Templates {
+	return periodsapplication.NewItemTemplates(periodspostgres.NewRepositoryInTx(tx))
 }
 
 func incomeItemsInTx(tx pgx.Tx) platformsapplication.IncomeItems {

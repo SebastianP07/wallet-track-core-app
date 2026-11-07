@@ -869,7 +869,10 @@ paths:
       summary: Add an item to a month
       tags:
       - Period items
-      description: 409 if the month is closed.
+      description: 409 if the month is closed. With `repeatsMonthly` on a fixed or income item, the same
+        transaction also creates an active recurring template with the item's name, amount, tag and, on a
+        fixed item, the day of its `dueDate` as `dueDay`, and links the item to it (`templateId`). Every month
+        opened from then on gets the item; months already opened do not.
       parameters:
       - $ref: '#/components/parameters/Period'
       - $ref: '#/components/parameters/CsrfToken'
@@ -952,10 +955,20 @@ paths:
       summary: Delete an item
       tags:
       - Period items
-      description: A payment linked to a person-linked income item stays, as history, with its coverage.
+      description: Deletes the item from its own month only. A payment linked to a person-linked income item
+        stays, as history, with its coverage. With `stopRepeating=true` the same transaction also deactivates
+        the item's template, if it has one, so no month opened from then on gets it; the template is kept,
+        inactive, and items of other months, paid or not, stay as they are. An overdue expense deleted from
+        its month of origin leaves the totals of the month that owed it (D1, D7).
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
+      - name: stopRepeating
+        in: query
+        required: false
+        description: Also stop the item's template. Absent means false.
+        schema:
+          type: boolean
       responses:
         '204':
           description: Item deleted.
@@ -2611,6 +2624,12 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Id'
           - type: 'null'
+        repeatsMonthly:
+          type: boolean
+          default: false
+          description: Only on a `fixed` item; `true` on an `occasional` one returns 400. Also creates the
+            recurring template that repeats it every month opened from now on, with the day of `dueDate` as
+            its due day.
       additionalProperties: false
     IncomeItemCreate:
       type: object
@@ -2630,6 +2649,10 @@ components:
           oneOf:
           - $ref: '#/components/schemas/Id'
           - type: 'null'
+        repeatsMonthly:
+          type: boolean
+          default: false
+          description: Also creates the recurring template that repeats it every month opened from now on.
       additionalProperties: false
     CardChargeItemCreate:
       type: object

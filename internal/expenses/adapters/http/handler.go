@@ -132,6 +132,8 @@ type itemBody struct {
 	CardID  json.RawMessage `json:"cardId"`
 	TagID   json.RawMessage `json:"tagId"`
 	Status  json.RawMessage `json:"status"`
+	// RepeatsMonthly is only for a create; an edit refuses it by name.
+	RepeatsMonthly json.RawMessage `json:"repeatsMonthly"`
 }
 
 func toItemResponse(view application.ItemView) itemResponse {
@@ -278,11 +280,12 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var fields []platform.FieldError
 	input := domain.NewItemInput{
-		Kind:    requiredString(body.Kind, "kind", &fields),
-		Name:    requiredString(body.Name, "name", &fields),
-		DueDate: presentDate(body.DueDate),
-		CardID:  nullableID(body.CardID, "cardId", &fields),
-		TagID:   nullableID(body.TagID, "tagId", &fields).Value,
+		Kind:           requiredString(body.Kind, "kind", &fields),
+		Name:           requiredString(body.Name, "name", &fields),
+		DueDate:        presentDate(body.DueDate),
+		CardID:         nullableID(body.CardID, "cardId", &fields),
+		TagID:          nullableID(body.TagID, "tagId", &fields).Value,
+		RepeatsMonthly: optionalBool(body.RepeatsMonthly, "repeatsMonthly", &fields),
 	}
 	if body.Amount == nil {
 		fields = append(fields, platform.FieldError{Field: "amount", Message: "is required"})
@@ -322,6 +325,9 @@ func (h *Handler) updateItem(w http.ResponseWriter, r *http.Request) {
 	if body.Status != nil {
 		fields = append(fields, platform.FieldError{Field: "status", Message: "cannot be changed here; use the done endpoints"})
 	}
+	if body.RepeatsMonthly != nil {
+		fields = append(fields, platform.FieldError{Field: "repeatsMonthly", Message: "cannot be changed here; edit or stop the template"})
+	}
 	if len(fields) > 0 {
 		writeBadRequest(w, fields...)
 		return
@@ -355,7 +361,18 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.UseCases.Delete.Execute(r.Context(), id); err != nil {
+	stopRepeating := false
+	if query := r.URL.Query(); query.Has("stopRepeating") {
+		switch query.Get("stopRepeating") {
+		case "true":
+			stopRepeating = true
+		case "false":
+		default:
+			writeBadRequest(w, platform.FieldError{Field: "stopRepeating", Message: "must be true or false"})
+			return
+		}
+	}
+	if err := h.UseCases.Delete.Execute(r.Context(), id, stopRepeating); err != nil {
 		h.writeError(w, r, err)
 		return
 	}
@@ -429,6 +446,19 @@ func optionalString(raw json.RawMessage, field string, fields *[]platform.FieldE
 		return nil
 	}
 	return value
+}
+
+// optionalBool is false when absent.
+func optionalBool(raw json.RawMessage, field string, fields *[]platform.FieldError) bool {
+	if raw == nil {
+		return false
+	}
+	var value *bool
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		*fields = append(*fields, platform.FieldError{Field: field, Message: "must be a boolean"})
+		return false
+	}
+	return *value
 }
 
 // presentDate leaves every rule to the domain: only whether the field was sent, and as what text. A

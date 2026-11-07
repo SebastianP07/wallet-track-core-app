@@ -2,8 +2,10 @@ package application
 
 import (
 	"context"
+	"errors"
 
 	"github.com/SebastianP07/wallet-track-core-app/internal/periods/domain"
+	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
 )
 
 type ListTemplates struct {
@@ -86,4 +88,51 @@ func (u *DeleteTemplate) Execute(ctx context.Context, id string) error {
 		return domain.ErrTemplateNotFound
 	}
 	return nil
+}
+
+// ItemTemplates is what the expenses module asks of this one when an item is added to repeat monthly or
+// removed to stop repeating. Built on a repository from another module's transaction, it runs in it.
+type ItemTemplates struct {
+	repo Repository
+}
+
+func NewItemTemplates(repo Repository) *ItemTemplates {
+	return &ItemTemplates{repo: repo}
+}
+
+// CreateFor stores an active template with the item's values; the month it was added to already has its item.
+func (t *ItemTemplates) CreateFor(ctx context.Context, kind, name string, amount kernel.Money, dueDay *int, tagID *string) (string, error) {
+	template, err := domain.CreateNewTemplate(domain.NewTemplateInput{
+		Kind:   kind,
+		Name:   name,
+		Amount: int64(amount),
+		DueDay: dueDay,
+		TagID:  tagID,
+	})
+	if err != nil {
+		return "", err
+	}
+	created, err := t.repo.CreateTemplate(ctx, template)
+	if err != nil {
+		return "", err
+	}
+	return created.ID, nil
+}
+
+// Stop keeps the template, inactive, so the items it created keep their link and it can be resumed from the
+// templates section. One already inactive or deleted is left as it is.
+func (t *ItemTemplates) Stop(ctx context.Context, id string) error {
+	template, err := t.repo.LockTemplate(ctx, id)
+	if errors.Is(err, domain.ErrTemplateNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !template.Active {
+		return nil
+	}
+	template.Active = false
+	_, err = t.repo.UpdateTemplate(ctx, template)
+	return err
 }

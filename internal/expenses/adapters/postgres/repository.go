@@ -32,24 +32,29 @@ var itemConstraints = map[string]domain.Violation{
 // PaymentsInTx builds the platforms port on the transaction, so an item and its payment commit together.
 type PaymentsInTx func(tx pgx.Tx) application.MemberPayments
 
+// TemplatesInTx builds the periods port on the transaction, so an item and its template commit together.
+type TemplatesInTx func(tx pgx.Tx) application.Templates
+
 type TxManager struct {
-	pool     *pgxpool.Pool
-	payments PaymentsInTx
+	pool      *pgxpool.Pool
+	payments  PaymentsInTx
+	templates TemplatesInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool, payments PaymentsInTx) *TxManager {
-	return &TxManager{pool: pool, payments: payments}
+func NewTxManager(pool *pgxpool.Pool, payments PaymentsInTx, templates TemplatesInTx) *TxManager {
+	return &TxManager{pool: pool, payments: payments, templates: templates}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx), payments: m.payments(tx)})
+		return fn(ctx, &Repository{queries: sqlcgen.New(tx), payments: m.payments(tx), templates: m.templates(tx)})
 	})
 }
 
 type Repository struct {
-	queries  *sqlcgen.Queries
-	payments application.MemberPayments
+	queries   *sqlcgen.Queries
+	payments  application.MemberPayments
+	templates application.Templates
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
@@ -63,6 +68,10 @@ func NewRepositoryInTx(tx pgx.Tx) *Repository {
 
 func (r *Repository) MemberPayments() application.MemberPayments {
 	return r.payments
+}
+
+func (r *Repository) Templates() application.Templates {
+	return r.templates
 }
 
 func (r *Repository) GetPeriod(ctx context.Context, month kernel.YearMonth) (domain.Period, error) {
@@ -175,6 +184,25 @@ func (r *Repository) CreateItem(ctx context.Context, periodID string, item domai
 		return domain.Item{}, explainItemWrite(err)
 	}
 	return r.getItem(ctx, id)
+}
+
+func (r *Repository) SetItemTemplate(ctx context.Context, itemID, templateID string) (domain.Item, error) {
+	item, err := parseID(itemID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	template, err := parseID(templateID)
+	if err != nil {
+		return domain.Item{}, err
+	}
+	updated, err := r.queries.SetItemTemplate(ctx, sqlcgen.SetItemTemplateParams{ID: item, TemplateID: template})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if updated == 0 {
+		return domain.Item{}, domain.ErrItemNotFound
+	}
+	return r.getItem(ctx, item)
 }
 
 func (r *Repository) UpdateItem(ctx context.Context, item domain.Item) (domain.Item, error) {
