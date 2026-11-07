@@ -6,6 +6,8 @@ set -euo pipefail
 env_file="${1:-.env}"
 example_file="${2:-.env.example}"
 secrets=(TOTP_ENC_KEY PASSWORD_PEPPER)
+# Filled only when the file lists them empty. Hex, so a connection string can hold them unescaped.
+hex_secrets=(POSTGRES_PASSWORD)
 
 command -v openssl >/dev/null 2>&1 || {
   echo "keys: openssl is required" >&2
@@ -40,6 +42,17 @@ for key in "${secrets[@]}"; do
     echo "keys: $key already set, keeping it"
   else
     set_value "$key" "$(openssl rand -base64 32)"
+    echo "keys: generated $key"
+  fi
+done
+
+for key in "${hex_secrets[@]}"; do
+  if ! grep -q "^$key=" "$env_file"; then
+    continue
+  elif [[ -n "$(current_value "$key")" ]]; then
+    echo "keys: $key already set, keeping it"
+  else
+    set_value "$key" "$(openssl rand -hex 32)"
     echo "keys: generated $key"
   fi
 done

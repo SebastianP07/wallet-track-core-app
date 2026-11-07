@@ -1,0 +1,36 @@
+# Edge of the production-like local stack (infra/docker-compose.prod.yml). Caddy terminates HTTPS with its own
+# local CA and proxies everything to the web app; the API is never reachable from here.
+{
+	# Rootless Podman cannot bind 443, so HTTPS listens on 8443. Plain HTTP is neither published nor redirected.
+	http_port 8080
+	https_port 8443
+	auto_https disable_redirects
+	# The container cannot reach the host's trust store; the README explains how to trust the root by hand.
+	skip_install_trust
+	servers {
+		# Only TCP is published, so no HTTP/3 advertisement that browsers would try over UDP first.
+		protocols h1 h2
+	}
+}
+
+{$WALLET_HOST}:8443 {
+	tls internal
+
+	# The app sets its own nonce-based CSP per response, so Caddy never sets or touches one. "?" only fills a
+	# header the app did not send, so these never duplicate or override the app's values.
+	header {
+		defer
+		-Server
+		-Via
+		?Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		?X-Content-Type-Options "nosniff"
+		?Referrer-Policy "strict-origin"
+		X-Frame-Options "DENY"
+		Cross-Origin-Opener-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+	}
+
+	# Caddy is the first hop and trusts no proxy in front of it, so X-Forwarded-For reaches the web app as the
+	# TCP peer's address alone, whatever the client sent. That is the one hop TRUSTED_PROXY_HOPS=1 counts.
+	reverse_proxy web:3000
+}

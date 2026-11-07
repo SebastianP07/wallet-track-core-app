@@ -1,0 +1,145 @@
+# Production-like local stack (Phase 12): Postgres, the migration step, the API and the web app, built from the
+# same Dockerfiles Railway uses in Phase 13, behind Caddy on HTTPS. Only Caddy publishes a port.
+#
+#   bash scripts/keys.sh infra/.env.prod infra/.env.prod.example
+#   podman-compose --env-file infra/.env.prod -f infra/docker-compose.prod.yml build
+#   podman-compose --env-file infra/.env.prod -f infra/docker-compose.prod.yml up -d
+#
+# The README's "Production-like local stack" section covers trusting Caddy's CA, the owner and the phone.
+# Its own project name and volumes keep it apart from the development database in docker-compose.yml.
+name: wallet-track-prod
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+x-database-url: &database-url postgres://wallet_track:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/wallet_track?sslmode=disable
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.6@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wallet_track
+      POSTGRES_USER: wallet_track
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      # Postgres 18+ images keep PGDATA in a versioned directory under this path.
+      - postgres-data:/var/lib/postgresql
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Railway's pre-deploy command in Phase 13: the API image's goose applies pending migrations, then exits.
+  migrate:
+    image: localhost/wallet-track-api:prod
+    command: ["/app/goose", "up"]
+    environment:
+      GOOSE_DBSTRING: *database-url
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    <<: *hardening
+
+  api:
+    build:
+      context: ..
+    image: localhost/wallet-track-api:prod
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database-url
+      TOTP_ENC_KEY: ${TOTP_ENC_KEY:?set TOTP_ENC_KEY}
+      PASSWORD_PEPPER: ${PASSWORD_PEPPER:?set PASSWORD_PEPPER}
+      LOG_LEVEL: info
+      # Only the web app's BFF, at its fixed address on the backend network, may say who the client is.
+      TRUSTED_PROXIES: 10.213.0.10/32
+      ALLOWED_ORIGINS: https://${WALLET_HOST:-localhost}:${WALLET_HTTPS_PORT:-8443}
+      INSECURE_DEV_COOKIES: "false"
+      WEBAUTHN_RP_ID: ${WALLET_HOST:-localhost}
+      WEBAUTHN_RP_ORIGINS: https://${WALLET_HOST:-localhost}:${WALLET_HTTPS_PORT:-8443}
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # The URL is spelled out because Podman runs a one-element exec form through /bin/sh, which distroless lacks.
+      test: ["CMD", "/app/healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    <<: *hardening
+
+  web:
+    build:
+      context: ../../wallet-track-app
+    image: localhost/wallet-track-web:prod
+    restart: unless-stopped
+    environment:
+      API_INTERNAL_URL: http://api:8080
+      APP_ORIGIN: https://${WALLET_HOST:-localhost}:${WALLET_HTTPS_PORT:-8443}
+      # Caddy is the one proxy in front, and it replaces whatever X-Forwarded-For the client sent.
+      TRUSTED_PROXY_HOPS: "1"
+    networks:
+      edge: {}
+      backend:
+        ipv4_address: 10.213.0.10
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:mode=1777
+    <<: *hardening
+
+  caddy:
+    image: docker.io/library/caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee
+    restart: unless-stopped
+    environment:
+      WALLET_HOST: ${WALLET_HOST:-localhost}
+    ports:
+      # Loopback only by default. WALLET_BIND=0.0.0.0 opens it to the LAN, for the phone.
+      - "${WALLET_BIND:-127.0.0.1}:${WALLET_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,Z
+      # Holds the local CA's private key and the site certificate; removing it creates a new CA to trust.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge]
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    <<: *hardening
+
+networks:
+  edge: {}
+  # No route out, and nothing on it publishes a port. The fixed subnet pins the BFF's address for TRUSTED_PROXIES.
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.0.0/24
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.16.0 — 2026-11-07 — Production-like local stack
+
+- `Dockerfile`: builds on `golang:1.27.3-alpine3.24` with `GOTOOLCHAIN=local` and runs on `distroless/static-debian13:nonroot`,
+  both pinned by digest, with no cache mounts so Railway can build it. The image holds `server`, `admin`, `healthcheck`, goose
+  and `migrations/`. goose is the version `go.mod` pins with the tool directive, built with only the Postgres driver.
+- `cmd/healthcheck`: GETs `/healthz` and exits 0 only on a 200, for container healthchecks, since distroless has no shell or
+  curl. The URL is its argument, refused unless it is plain HTTP to a loopback address, or derived from `HTTP_ADDR`.
+- `infra/docker-compose.prod.yml`: Postgres, `migrate` (`goose up`), the API, the web app from the sibling checkout, and Caddy,
+  under its own project name and volumes. Postgres, the API and the web app share an internal network with no route out; only
+  Caddy publishes a port. Healthchecks on every long-running service, and the API waits for a successful migration.
+- The API runs with `INSECURE_DEV_COOKIES=false`, `TRUSTED_PROXIES` set to the web app's fixed address `10.213.0.10/32`, and
+  `ALLOWED_ORIGINS`, `WEBAUTHN_RP_ID` and `WEBAUTHN_RP_ORIGINS` all derived from `WALLET_HOST` and `WALLET_HTTPS_PORT`.
+- `infra/Caddyfile`: HTTPS on 8443 with Caddy's local CA, no HTTP listener published, HTTP/3 off because only TCP is
+  published. It adds `X-Frame-Options`, `Permissions-Policy` and `Cross-Origin-Opener-Policy`, fills HSTS,
+  `X-Content-Type-Options` and `Referrer-Policy` only when missing, drops `Server` and `Via`, and never sets a CSP.
+- `infra/.env.prod.example` and `scripts/keys.sh`, which now also fills an empty `POSTGRES_PASSWORD` with hex so the
+  connection string needs no escaping. `make keys` is unchanged for an existing `.env`.
+- `.dockerignore` keeps `.env*`, VCS data and local state out of the build context. README: running the stack, trusting
+  Caddy's CA, the owner, and the phone and host name notes. No new dependencies. No new automated tests (T7).
+
 ## 0.15.0 — 2026-11-05 — CSV export
 
 - `GET /dashboard/export?period=` in `internal/dashboard`, behind the full session: `kind,name,amount,due_date,status,tag`, one

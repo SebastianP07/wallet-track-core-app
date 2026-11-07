@@ -1,0 +1,17 @@
+# Build contexts get only what the Dockerfile copies. Secrets and local state never leave the machine.
+.env
+.env.*
+**/.env
+**/.env.*
+.git
+.github
+.codegraph
+.idea
+.vscode
+bin
+infra
+scripts
+*.test
+*.out
+Dockerfile
+.dockerignore
