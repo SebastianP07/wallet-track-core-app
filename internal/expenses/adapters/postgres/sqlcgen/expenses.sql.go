@@ -203,7 +203,7 @@ SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amou
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.period_id = $1
-ORDER BY i.due_date NULLS LAST, i.name, i.id
+ORDER BY CASE i.kind WHEN 'fixed' THEN 1 WHEN 'occasional' THEN 2 WHEN 'income' THEN 3 ELSE 4 END, i.position, i.id
 `
 
 type ListItemsRow struct {
@@ -226,6 +226,7 @@ type ListItemsRow struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+// Section by section (04 fixed, 05 occasional, 06 income, then card charges), each in its manual order (D13).
 func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListItemsRow, error) {
 	rows, err := q.db.Query(ctx, listItems, periodID)
 	if err != nil {
@@ -254,6 +255,43 @@ func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListIt
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKindOrder = `-- name: ListKindOrder :many
+SELECT id, template_id
+FROM period_items
+WHERE period_id = $1 AND kind = $2
+ORDER BY position, id
+`
+
+type ListKindOrderParams struct {
+	PeriodID pgtype.UUID
+	Kind     string
+}
+
+type ListKindOrderRow struct {
+	ID         pgtype.UUID
+	TemplateID pgtype.UUID
+}
+
+func (q *Queries) ListKindOrder(ctx context.Context, arg ListKindOrderParams) ([]ListKindOrderRow, error) {
+	rows, err := q.db.Query(ctx, listKindOrder, arg.PeriodID, arg.Kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListKindOrderRow
+	for rows.Next() {
+		var i ListKindOrderRow
+		if err := rows.Scan(&i.ID, &i.TemplateID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -459,6 +497,18 @@ func (q *Queries) LockPeriodOfItem(ctx context.Context, id pgtype.UUID) (LockPer
 		&i.Status,
 	)
 	return i, err
+}
+
+const setItemPositions = `-- name: SetItemPositions :exec
+UPDATE period_items AS i
+SET position = ordered.ord::INTEGER
+FROM unnest($1::uuid[]) WITH ORDINALITY AS ordered (item_id, ord)
+WHERE i.id = ordered.item_id
+`
+
+func (q *Queries) SetItemPositions(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, setItemPositions, ids)
+	return err
 }
 
 const setItemStatus = `-- name: SetItemStatus :execrows

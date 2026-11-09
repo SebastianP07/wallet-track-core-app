@@ -288,6 +288,22 @@ func (r *Repository) DeleteTemplate(ctx context.Context, id string) (bool, error
 	return deleted > 0, nil
 }
 
+func (r *Repository) ReorderTemplates(ctx context.Context, ids []string) error {
+	uuids := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		uuid, err := parseID(id)
+		if err != nil {
+			return err
+		}
+		uuids = append(uuids, uuid)
+	}
+	// Locked in id order, as a month's open takes them, so the two cannot deadlock.
+	if err := r.queries.LockTemplatesByID(ctx, uuids); err != nil {
+		return err
+	}
+	return r.queries.PlaceTemplates(ctx, uuids)
+}
+
 func explainTemplateWrite(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -395,6 +411,7 @@ func toTemplate(row sqlcgen.RecurringTemplate) domain.Template {
 		CardID:    fromOptionalID(row.CardID),
 		TagID:     fromOptionalID(row.TagID),
 		Active:    row.Active,
+		Position:  int(row.Position),
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,
 	}

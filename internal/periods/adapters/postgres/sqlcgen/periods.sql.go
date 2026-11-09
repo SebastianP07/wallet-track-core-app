@@ -134,7 +134,7 @@ func (q *Queries) CreatePeriod(ctx context.Context, arg CreatePeriodParams) (Per
 const createTemplate = `-- name: CreateTemplate :one
 INSERT INTO recurring_templates (kind, name, amount, due_day, card_id, tag_id, active)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+RETURNING id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 `
 
 type CreateTemplateParams struct {
@@ -169,6 +169,7 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Position,
 	)
 	return i, err
 }
@@ -212,7 +213,7 @@ func (q *Queries) GetPeriod(ctx context.Context, arg GetPeriodParams) (Period, e
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 FROM recurring_templates
 WHERE id = $1
 `
@@ -231,6 +232,7 @@ func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (RecurringTem
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Position,
 	)
 	return i, err
 }
@@ -269,7 +271,7 @@ func (q *Queries) ListPeriods(ctx context.Context) ([]Period, error) {
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 FROM recurring_templates
 WHERE $1::boolean IS NULL OR active = $1::boolean
 ORDER BY name, id
@@ -295,6 +297,7 @@ func (q *Queries) ListTemplates(ctx context.Context, active pgtype.Bool) ([]Recu
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Position,
 		); err != nil {
 			return nil, err
 		}
@@ -307,7 +310,7 @@ func (q *Queries) ListTemplates(ctx context.Context, active pgtype.Bool) ([]Recu
 }
 
 const lockActiveTemplates = `-- name: LockActiveTemplates :many
-SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 FROM recurring_templates
 WHERE active
 ORDER BY id
@@ -334,6 +337,7 @@ func (q *Queries) LockActiveTemplates(ctx context.Context) ([]RecurringTemplate,
 			&i.Active,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Position,
 		); err != nil {
 			return nil, err
 		}
@@ -372,7 +376,7 @@ func (q *Queries) LockPeriod(ctx context.Context, arg LockPeriodParams) (Period,
 }
 
 const lockTemplate = `-- name: LockTemplate :one
-SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+SELECT id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 FROM recurring_templates
 WHERE id = $1
 FOR UPDATE
@@ -392,8 +396,22 @@ func (q *Queries) LockTemplate(ctx context.Context, id pgtype.UUID) (RecurringTe
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Position,
 	)
 	return i, err
+}
+
+const lockTemplatesByID = `-- name: LockTemplatesByID :exec
+SELECT id
+FROM recurring_templates
+WHERE id = ANY($1::uuid[])
+ORDER BY id
+FOR UPDATE
+`
+
+func (q *Queries) LockTemplatesByID(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, lockTemplatesByID, ids)
+	return err
 }
 
 const markPendingIncomeOverdue = `-- name: MarkPendingIncomeOverdue :exec
@@ -428,11 +446,32 @@ func (q *Queries) MarkPeriodClosed(ctx context.Context, id pgtype.UUID) (Period,
 	return i, err
 }
 
+const placeTemplates = `-- name: PlaceTemplates :exec
+UPDATE recurring_templates AS t
+SET position = slots.position
+FROM (
+  SELECT listed.template_id, held.position
+  FROM unnest($1::uuid[]) WITH ORDINALITY AS listed (template_id, ord)
+  JOIN (
+    SELECT position, row_number() OVER (ORDER BY position, id) AS ord
+    FROM recurring_templates
+    WHERE id = ANY($1::uuid[])
+  ) AS held ON held.ord = listed.ord
+) AS slots
+WHERE t.id = slots.template_id
+`
+
+// The listed templates take, in the listed order, the positions they hold between them now (D13).
+func (q *Queries) PlaceTemplates(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, placeTemplates, ids)
+	return err
+}
+
 const updateTemplate = `-- name: UpdateTemplate :one
 UPDATE recurring_templates
 SET name = $2, amount = $3, due_day = $4, card_id = $5, tag_id = $6, active = $7
 WHERE id = $1
-RETURNING id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at
+RETURNING id, kind, name, amount, due_day, card_id, tag_id, active, created_at, updated_at, position
 `
 
 type UpdateTemplateParams struct {
@@ -467,6 +506,7 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		&i.Active,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Position,
 	)
 	return i, err
 }

@@ -22,7 +22,8 @@ SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amou
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.period_id = $1
-ORDER BY i.due_date NULLS LAST, i.name, i.id;
+-- Section by section (04 fixed, 05 occasional, 06 income, then card charges), each in its manual order (D13).
+ORDER BY CASE i.kind WHEN 'fixed' THEN 1 WHEN 'occasional' THEN 2 WHEN 'income' THEN 3 ELSE 4 END, i.position, i.id;
 
 -- name: GetItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
@@ -77,3 +78,15 @@ FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind = 'income'
 ORDER BY p.year, p.month, i.name, i.id;
+
+-- name: ListKindOrder :many
+SELECT id, template_id
+FROM period_items
+WHERE period_id = $1 AND kind = $2
+ORDER BY position, id;
+
+-- name: SetItemPositions :exec
+UPDATE period_items AS i
+SET position = ordered.ord::INTEGER
+FROM unnest(@ids::uuid[]) WITH ORDINALITY AS ordered (item_id, ord)
+WHERE i.id = ordered.item_id;

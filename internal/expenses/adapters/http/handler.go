@@ -22,6 +22,8 @@ const (
 	basePath     = "/api/v1"
 	dateLayout   = "2006-01-02"
 	monthMessage = "must be a month as YYYY-MM, from 2000-01 on"
+	// The contract's bound on one reorder, far beyond any month's items.
+	maxOrderIDs = 1000
 )
 
 var (
@@ -40,6 +42,7 @@ type UseCases struct {
 	Done    *application.MarkItemDone
 	Undone  *application.UnmarkItemDone
 	Overdue *application.ListOverdueItems
+	Reorder *application.ReorderItems
 }
 
 type Config struct {
@@ -69,6 +72,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 	read("/periods/{period}/items", h.listItems)
 	write(http.MethodPost, "/periods/{period}/items", h.createItem)
+	write(http.MethodPut, "/periods/{period}/items/order", h.reorderItems)
 	read("/period-items/{id}", h.getItem)
 	write(http.MethodPatch, "/period-items/{id}", h.updateItem)
 	write(http.MethodDelete, "/period-items/{id}", h.deleteItem)
@@ -257,6 +261,59 @@ func itemFilter(w http.ResponseWriter, r *http.Request) (domain.ItemFilter, bool
 		return domain.ItemFilter{}, false
 	}
 	return filter, true
+}
+
+// orderBody keeps each field raw, so that a wrong type is reported on its own field.
+type orderBody struct {
+	Kind json.RawMessage `json:"kind"`
+	IDs  json.RawMessage `json:"ids"`
+}
+
+func (h *Handler) reorderItems(w http.ResponseWriter, r *http.Request) {
+	month, ok := pathMonth(w, r)
+	if !ok {
+		return
+	}
+	var body orderBody
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
+		writeBadRequest(w)
+		return
+	}
+	var fields []platform.FieldError
+	rawKind := requiredString(body.Kind, "kind", &fields)
+	ids := idList(body.IDs, "ids", &fields)
+	if len(fields) > 0 {
+		writeBadRequest(w, fields...)
+		return
+	}
+	kind, err := domain.ParseOrderKind(rawKind)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	if err := h.UseCases.Reorder.Execute(r.Context(), month, kind, ids); err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// idList is a required array of UUIDs, lowered so that the same id always reads the same.
+func idList(raw json.RawMessage, field string, fields *[]platform.FieldError) []string {
+	var values []string
+	if raw == nil || json.Unmarshal(raw, &values) != nil || values == nil || len(values) > maxOrderIDs {
+		*fields = append(*fields, platform.FieldError{Field: field, Message: "must be an array of at most 1000 UUIDs"})
+		return nil
+	}
+	ids := make([]string, 0, len(values))
+	for _, value := range values {
+		if !uuidPattern.MatchString(value) {
+			*fields = append(*fields, platform.FieldError{Field: field, Message: "must be an array of at most 1000 UUIDs"})
+			return nil
+		}
+		ids = append(ids, strings.ToLower(value))
+	}
+	return ids
 }
 
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {

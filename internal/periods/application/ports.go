@@ -45,6 +45,9 @@ type Repository interface {
 	CreateTemplate(ctx context.Context, template domain.NewTemplate) (domain.Template, error)
 	UpdateTemplate(ctx context.Context, template domain.Template) (domain.Template, error)
 	DeleteTemplate(ctx context.Context, id string) (found bool, err error)
+	// ReorderTemplates gives the listed templates, in the listed order, the positions they hold between them now,
+	// so templates left out keep theirs (D13).
+	ReorderTemplates(ctx context.Context, ids []string) error
 }
 
 // MemberIncome is what this module asks of the platforms module when opening a month: who owes it, and

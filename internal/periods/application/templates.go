@@ -119,6 +119,12 @@ func (t *ItemTemplates) CreateFor(ctx context.Context, kind, name string, amount
 	return created.ID, nil
 }
 
+// Reorder puts the templates in the order of ids, among the positions they hold now, so the next month opened gets
+// their items in that order (D13).
+func (t *ItemTemplates) Reorder(ctx context.Context, ids []string) error {
+	return t.repo.ReorderTemplates(ctx, ids)
+}
+
 // Stop keeps the template, inactive, so the items it created keep their link and it can be resumed from the
 // templates section. One already inactive or deleted is left as it is.
 func (t *ItemTemplates) Stop(ctx context.Context, id string) error {

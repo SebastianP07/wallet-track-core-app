@@ -45,14 +45,16 @@ func parseTemplateKind(raw string) (TemplateKind, bool) {
 }
 
 type Template struct {
-	ID        string
-	Kind      TemplateKind
-	Name      string
-	Amount    kernel.Money
-	DueDay    *int
-	CardID    *string
-	TagID     *string
-	Active    bool
+	ID     string
+	Kind   TemplateKind
+	Name   string
+	Amount kernel.Money
+	DueDay *int
+	CardID *string
+	TagID  *string
+	Active bool
+	// Position orders the templates, and so the items a month opened from them gets (D13).
+	Position  int
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

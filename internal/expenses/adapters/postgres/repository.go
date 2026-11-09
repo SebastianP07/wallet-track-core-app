@@ -290,6 +290,34 @@ func (r *Repository) DeleteItem(ctx context.Context, id string) (bool, error) {
 	return deleted > 0, nil
 }
 
+func (r *Repository) ListKindOrder(ctx context.Context, periodID string, kind domain.ItemKind) ([]domain.OrderedItem, error) {
+	period, err := parseID(periodID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := r.queries.ListKindOrder(ctx, sqlcgen.ListKindOrderParams{PeriodID: period, Kind: string(kind)})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]domain.OrderedItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, domain.OrderedItem{ID: row.ID.String(), TemplateID: fromOptionalID(row.TemplateID)})
+	}
+	return items, nil
+}
+
+func (r *Repository) SetItemOrder(ctx context.Context, ids []string) error {
+	uuids := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		uuid, err := parseID(id)
+		if err != nil {
+			return err
+		}
+		uuids = append(uuids, uuid)
+	}
+	return r.queries.SetItemPositions(ctx, uuids)
+}
+
 func explainItemWrite(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {

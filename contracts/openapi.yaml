@@ -845,7 +845,8 @@ paths:
       tags:
       - Period items
       description: Filters narrow `items` only. `totals` always covers the whole month, because tags never
-        affect totals (D5).
+        affect totals (D5). Items come section by section (fixed, occasional, income, card charge), each kind
+        in its manual order (D13); the client groups them, but never reorders them.
       parameters:
       - $ref: '#/components/parameters/Period'
       - $ref: '#/components/parameters/ItemKindFilter'
@@ -899,6 +900,37 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /periods/{period}/items/order:
+    put:
+      operationId: reorderPeriodItems
+      summary: Order a month's items of one kind
+      tags:
+      - Period items
+      description: 'Stores the manual order of one kind''s items in the month (D13). `ids` must list every
+        item of that kind in the month exactly once, in the new order; anything else is a 400 and nothing
+        changes. The same transaction puts the recurring templates of those items in the same order, among
+        the positions they already hold, so the next month opened gets its items from them in that order.
+        Order moves no total, so a closed month can be reordered too. Items added later go to the end.'
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeriodItemOrder'
+      responses:
+        '204':
+          description: Order stored.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /period-items/{id}:
     get:
       operationId: getPeriodItem
@@ -2688,6 +2720,26 @@ components:
           occasional: '#/components/schemas/ExpenseItemCreate'
           income: '#/components/schemas/IncomeItemCreate'
           card_charge: '#/components/schemas/CardChargeItemCreate'
+    PeriodItemOrder:
+      type: object
+      required:
+      - kind
+      - ids
+      properties:
+        kind:
+          type: string
+          enum:
+          - fixed
+          - occasional
+          - income
+          description: The kinds with their own section; card charges are not ordered by hand.
+        ids:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/Id'
+          description: Every item of that kind in the month, each once, first to last.
+      additionalProperties: false
     PeriodItemUpdate:
       type: object
       description: '`kind` and `status` cannot be edited; the done endpoints change `status`. `dueDate`

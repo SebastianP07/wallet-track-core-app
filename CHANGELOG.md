@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.18.0 — 2026-11-09 — Ordering
+
+- D13: migration `00011_manual_order.sql` adds `position` to `period_items` (per month and kind) and
+  `recurring_templates`. Backfill: items by the previous order (due date, name, id); templates after their item in the
+  latest month, then due day, name, id. `set_updated_at` is off during the backfill, so no row's content changes. A
+  `BEFORE INSERT` trigger on each table puts a row without a position at the end of its list, so every writer (items
+  added from a section, months opened from templates, member income, the seed) appends.
+- `GET /periods/{period}/items` returns items section by section (fixed, occasional, income, card charge), each in
+  manual order; the CSV export follows it. Opening a month clones templates in template order.
+- New `PUT /periods/{period}/items/order` (`{kind, ids}`, kind fixed/occasional/income): `ids` must be exactly that
+  month's items of that kind, each once, or 400 and nothing changes; 404 for a month not opened. In one transaction,
+  holding the month's row, it numbers the items and gives their templates, in the same order, the positions they hold
+  between them (templates locked in id order, as an open does). Closed months can be reordered. Returns 204.
+
 ## 0.17.0 — 2026-11-07 — Owner feedback
 
 - D7 rewritten: closing a month carries its unpaid fixed and occasional items, and the overdue expenses it owed, to the

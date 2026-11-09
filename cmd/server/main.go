@@ -274,6 +274,7 @@ func newExpensesHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 			Done:    expensesapplication.NewMarkItemDone(tx, clock),
 			Undone:  expensesapplication.NewUnmarkItemDone(tx, clock),
 			Overdue: expensesapplication.NewListOverdueItems(repo, clock),
+			Reorder: expensesapplication.NewReorderItems(tx),
 		},
 		RequireSession: auth.RequireFullSession,
 		RequireCSRF:    auth.CSRF.Protect,

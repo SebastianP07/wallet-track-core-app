@@ -90,6 +90,7 @@ type PeriodItem struct {
 	UpdatedAt  pgtype.Timestamptz
 	OwedYear   pgtype.Int4
 	OwedMonth  pgtype.Int4
+	Position   int32
 }
 
 type Person struct {
@@ -150,6 +151,7 @@ type RecurringTemplate struct {
 	Active    bool
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+	Position  int32
 }
 
 type Session struct {

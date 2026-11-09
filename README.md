@@ -212,6 +212,16 @@ Then sign in at the origin, with the enrollment secret it printed.
 - A month's totals stay within `kernel.MaxMoney`. Each item write locks the month's row first, so it needs no advisory
   lock, and `POST /periods` refuses templates that would add up past the bound.
 
+## Manual order
+
+- `period_items.position` orders one kind's items in one month and `recurring_templates.position` orders the templates
+  (D13). `GET /periods/{period}/items` returns fixed, occasional, income, then card charges, each by position. A
+  `BEFORE INSERT` trigger appends any row inserted without a position, and opening a month clones templates in their order.
+- `PUT /periods/{period}/items/order` takes `{kind, ids}` for fixed, occasional or income: `ids` must be every item of
+  that kind in the month exactly once, or it is a 400 and nothing changes. It locks the month's row, numbers the items
+  and gives their templates, in that order, the positions they already hold between them, so templates left out keep
+  theirs. Closed months can be reordered. Grouping done items first is the client's job; it never reorders.
+
 ## Overdue list
 
 - `GET /periods/{period}/overdue-items` lists the `overdue` fixed and occasional items the month owes (`owedIn`), oldest

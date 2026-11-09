@@ -35,6 +35,10 @@ type Repository interface {
 	UpdateItem(ctx context.Context, item domain.Item) (domain.Item, error)
 	SetItemStatus(ctx context.Context, item domain.Item) (domain.Item, error)
 	DeleteItem(ctx context.Context, id string) (found bool, err error)
+	// ListKindOrder is the month's items of one kind in their manual order (D13).
+	ListKindOrder(ctx context.Context, periodID string, kind domain.ItemKind) ([]domain.OrderedItem, error)
+	// SetItemOrder numbers the items from 1 in the order of ids.
+	SetItemOrder(ctx context.Context, ids []string) error
 	// GetMemberItem returns domain.ErrItemNotFound when the person has no item in that month, opened or not.
 	GetMemberItem(ctx context.Context, personID string, month kernel.YearMonth) (domain.Item, error)
 	// MemberPayments works inside this repository's transaction. Only a repository from WithinTx has it.
@@ -61,6 +65,9 @@ type Templates interface {
 	// Stop deactivates a template, so that no month opened from now on gets its item. One already inactive
 	// or deleted is no error. Items it created stay as they are.
 	Stop(ctx context.Context, id string) error
+	// Reorder puts the templates in the order of ids, among the positions they hold now, so the next month opened
+	// gets their items in that order (D13).
+	Reorder(ctx context.Context, ids []string) error
 }
 
 type TxManager interface {

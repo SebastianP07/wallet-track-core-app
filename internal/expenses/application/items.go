@@ -245,6 +245,45 @@ func (u *DeleteItem) Execute(ctx context.Context, id string, stopRepeating bool)
 	})
 }
 
+type ReorderItems struct {
+	tx TxManager
+}
+
+func NewReorderItems(tx TxManager) *ReorderItems {
+	return &ReorderItems{tx: tx}
+}
+
+// Execute stores the owner's order of one kind's items in a month, ids being every one of them in the new order,
+// and puts the templates of those items in the same order, so the next month opened follows it (D13). Order
+// moves no total, so a closed month can be reordered too. The month's row is held, so no item is added or removed
+// meanwhile.
+func (u *ReorderItems) Execute(ctx context.Context, month kernel.YearMonth, kind domain.ItemKind, ids []string) error {
+	return u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
+		period, err := repo.LockPeriod(ctx, month)
+		if err != nil {
+			return err
+		}
+		current, err := repo.ListKindOrder(ctx, period.ID, kind)
+		if err != nil {
+			return fmt.Errorf("list items in order: %w", err)
+		}
+		templates, err := domain.TemplatesInOrder(current, ids)
+		if err != nil {
+			return err
+		}
+		if err := repo.SetItemOrder(ctx, ids); err != nil {
+			return fmt.Errorf("set item order: %w", err)
+		}
+		if len(templates) == 0 {
+			return nil
+		}
+		if err := repo.Templates().Reorder(ctx, templates); err != nil {
+			return fmt.Errorf("reorder templates: %w", err)
+		}
+		return nil
+	})
+}
+
 type MarkItemDone struct {
 	tx    TxManager
 	clock Clock

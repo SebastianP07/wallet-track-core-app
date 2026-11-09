@@ -1,9 +1,11 @@
 package application
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/SebastianP07/wallet-track-core-app/internal/periods/domain"
 	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
@@ -80,6 +82,11 @@ func (u *OpenPeriod) Execute(ctx context.Context, month kernel.YearMonth) (Opene
 		if err := domain.CheckOpeningTotals(templates, owing); err != nil {
 			return err
 		}
+		// Each item goes to the end of its list as it is stored, so cloning in template order gives the month
+		// that order (D13). The rows stay locked in id order.
+		slices.SortStableFunc(templates, func(a, b domain.Template) int {
+			return cmp.Or(cmp.Compare(a.Position, b.Position), cmp.Compare(a.ID, b.ID))
+		})
 		for _, template := range templates {
 			if err := repo.AddItem(ctx, domain.ItemFrom(template, period)); err != nil {
 				return fmt.Errorf("clone template: %w", err)
