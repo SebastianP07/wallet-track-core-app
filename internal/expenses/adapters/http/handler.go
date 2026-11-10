@@ -90,6 +90,7 @@ type itemResponse struct {
 	DueDate    *string    `json:"dueDate"`
 	TemplateID *string    `json:"templateId"`
 	PersonID   *string    `json:"personId"`
+	PlatformID *string    `json:"platformId"`
 	CardID     *string    `json:"cardId"`
 	TagID      *string    `json:"tagId"`
 	Status     string     `json:"status"`
@@ -149,6 +150,7 @@ func toItemResponse(view application.ItemView) itemResponse {
 		Amount:     int64(view.Amount),
 		TemplateID: view.TemplateID,
 		PersonID:   view.PersonID,
+		PlatformID: view.PlatformID,
 		CardID:     view.CardID,
 		TagID:      view.TagID,
 		Status:     string(view.Status),
@@ -573,6 +575,8 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		platform.WriteProblem(w, http.StatusNotFound, "No such resource.")
 	case errors.Is(err, domain.ErrMonthClosed):
 		platform.WriteProblem(w, http.StatusConflict, "This month is closed, so it takes no new items.")
+	case errors.Is(err, domain.ErrKeptByPlatform):
+		platform.WriteProblem(w, http.StatusConflict, "This card charge comes from a platform; edit or remove it from the platform.")
 	case errors.Is(err, kernel.ErrMoneyOutOfRange):
 		// From the member's payment an item's toggle records: what is owed, times the months it covers.
 		writeBadRequest(w, platform.FieldError{Field: "amount", Message: "the member's payment would pass 9007199254740991"})

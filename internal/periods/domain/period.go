@@ -1,4 +1,4 @@
-// Package domain holds the rules of monthly periods and recurring templates (D3, D7, D11).
+// Package domain holds the rules of monthly periods and recurring templates (D3, D7, D11, D14).
 package domain
 
 import (
@@ -99,4 +99,32 @@ type NewMemberItem struct {
 
 func MemberItemFrom(member OwingMember, period Period) NewMemberItem {
 	return NewMemberItem{PeriodID: period.ID, PersonID: member.PersonID, Name: member.ItemName, Amount: member.Amount}
+}
+
+// PlatformCharge is a platform with a card, as the platforms module says: the source of one card charge in
+// every month opened (D14).
+type PlatformCharge struct {
+	PlatformID string
+	Name       string
+	Amount     kernel.Money
+	CardID     string
+}
+
+// NewPlatformItem is a platform's pending card charge that has not been stored yet.
+type NewPlatformItem struct {
+	PeriodID   string
+	PlatformID string
+	Name       string
+	Amount     kernel.Money
+	CardID     string
+}
+
+func PlatformItemFrom(charge PlatformCharge, period Period) NewPlatformItem {
+	return NewPlatformItem{
+		PeriodID:   period.ID,
+		PlatformID: charge.PlatformID,
+		Name:       charge.Name,
+		Amount:     charge.Amount,
+		CardID:     charge.CardID,
+	}
 }

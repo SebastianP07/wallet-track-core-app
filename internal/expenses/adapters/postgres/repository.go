@@ -318,6 +318,62 @@ func (r *Repository) SetItemOrder(ctx context.Context, ids []string) error {
 	return r.queries.SetItemPositions(ctx, uuids)
 }
 
+func (r *Repository) LockOpenPeriods(ctx context.Context) error {
+	_, err := r.queries.LockOpenPeriods(ctx)
+	return err
+}
+
+func (r *Repository) UpdatePlatformCharges(ctx context.Context, charge domain.PlatformCharge) error {
+	platform, card, err := chargeIDs(charge)
+	if err != nil {
+		return err
+	}
+	return r.queries.UpdatePlatformCharges(ctx, sqlcgen.UpdatePlatformChargesParams{
+		PlatformID: platform,
+		Name:       charge.Name,
+		Amount:     int64(charge.Amount),
+		CardID:     card,
+	})
+}
+
+func (r *Repository) AddPlatformCharges(ctx context.Context, charge domain.PlatformCharge) error {
+	platform, card, err := chargeIDs(charge)
+	if err != nil {
+		return err
+	}
+	err = r.queries.AddPlatformCharges(ctx, sqlcgen.AddPlatformChargesParams{
+		PlatformID: platform,
+		Name:       charge.Name,
+		Amount:     int64(charge.Amount),
+		CardID:     card,
+	})
+	return explainItemWrite(err)
+}
+
+func (r *Repository) RemovePlatformCharges(ctx context.Context, platformID string) error {
+	platform, err := parseID(platformID)
+	if err != nil {
+		return err
+	}
+	return r.queries.RemovePlatformCharges(ctx, platform)
+}
+
+func (r *Repository) OpenCardChargesOutOfRange(ctx context.Context) (bool, error) {
+	return r.queries.OpenCardChargesOutOfRange(ctx, int64(kernel.MaxMoney))
+}
+
+func chargeIDs(charge domain.PlatformCharge) (pgtype.UUID, pgtype.UUID, error) {
+	platform, err := parseID(charge.PlatformID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	card, err := parseID(charge.CardID)
+	if err != nil {
+		return pgtype.UUID{}, pgtype.UUID{}, err
+	}
+	return platform, card, nil
+}
+
 func explainItemWrite(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -386,6 +442,7 @@ func toItem(row sqlcgen.GetItemRow) domain.Item {
 		Month:      kernel.YearMonth{Year: int(row.Year), Month: time.Month(row.Month)},
 		TemplateID: fromOptionalID(row.TemplateID),
 		PersonID:   fromOptionalID(row.PersonID),
+		PlatformID: fromOptionalID(row.PlatformID),
 		Kind:       domain.ItemKind(row.Kind),
 		Name:       row.Name,
 		Amount:     kernel.Money(row.Amount),

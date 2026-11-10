@@ -91,6 +91,7 @@ type PeriodItem struct {
 	OwedYear   pgtype.Int4
 	OwedMonth  pgtype.Int4
 	Position   int32
+	PlatformID pgtype.UUID
 }
 
 type Person struct {

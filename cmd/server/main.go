@@ -224,7 +224,7 @@ func newAccountsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 
 func newPeriodsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *periodshttp.Handler {
 	repo := periodspostgres.NewRepository(pool)
-	tx := periodspostgres.NewTxManager(pool, memberIncomeInTx)
+	tx := periodspostgres.NewTxManager(pool, memberIncomeInTx, platformChargesInTx)
 	return periodshttp.NewHandler(periodshttp.Config{
 		UseCases: periodshttp.UseCases{
 			ListPeriods:    periodsapplication.NewListPeriods(repo),
@@ -299,7 +299,7 @@ func newTagsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Log
 
 func newPlatformsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *platformshttp.Handler {
 	repo := platformspostgres.NewRepository(pool)
-	tx := platformspostgres.NewTxManager(pool, incomeItemsInTx)
+	tx := platformspostgres.NewTxManager(pool, incomeItemsInTx, cardChargesInTx)
 	return platformshttp.NewHandler(platformshttp.Config{
 		UseCases: platformshttp.UseCases{
 			ListPeople:     platformsapplication.NewListPeople(repo),
@@ -343,6 +343,14 @@ func incomeItemsInTx(tx pgx.Tx) platformsapplication.IncomeItems {
 	return expensesapplication.NewMemberItems(expensespostgres.NewRepositoryInTx(tx))
 }
 
+func platformChargesInTx(tx pgx.Tx) periodsapplication.PlatformCharges {
+	return platformCharges{platformsapplication.NewChargingPlatforms(platformspostgres.NewRepositoryInTx(tx))}
+}
+
+func cardChargesInTx(tx pgx.Tx) platformsapplication.CardCharges {
+	return expensesapplication.NewPlatformCharges(expensespostgres.NewRepositoryInTx(tx))
+}
+
 // memberIncome carries the answer of one module in the types of the other, which it cannot import.
 type memberIncome struct {
 	source *platformsapplication.MemberIncome
@@ -358,6 +366,28 @@ func (m memberIncome) Owing(ctx context.Context, month kernel.YearMonth) ([]peri
 		members = append(members, periodsdomain.OwingMember(member))
 	}
 	return members, nil
+}
+
+// platformCharges carries the platforms with a card in the periods module's types (D14).
+type platformCharges struct {
+	source *platformsapplication.ChargingPlatforms
+}
+
+func (p platformCharges) WithCard(ctx context.Context) ([]periodsdomain.PlatformCharge, error) {
+	platforms, err := p.source.WithCard(ctx)
+	if err != nil {
+		return nil, err
+	}
+	charges := make([]periodsdomain.PlatformCharge, 0, len(platforms))
+	for _, platform := range platforms {
+		charges = append(charges, periodsdomain.PlatformCharge{
+			PlatformID: platform.ID,
+			Name:       platform.Name,
+			Amount:     platform.MonthlyCost,
+			CardID:     *platform.CardID,
+		})
+	}
+	return charges, nil
 }
 
 var _ http.Handler = http.NewServeMux()

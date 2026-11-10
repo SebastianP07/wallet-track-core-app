@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.19.0 — 2026-11-10 — Platforms feed card charges
+
+- D14: migration `00012_platform_card_charges.sql` adds `period_items.platform_id` (FK to `platforms`, ON DELETE SET
+  NULL), CHECK `period_items_platform_only_on_card_charge` (card charges only, never with a template), unique partial
+  index `(period_id, platform_id)`, a `BEFORE DELETE` trigger on `credit_cards` that removes the pending platform charges
+  of open months, and a backfill of every open month from the platforms with a card (pending, appended in name order).
+  Down removes only pending linked charges of open months, then the column.
+- Opening a month asks the platforms module (`PlatformCharges.WithCard`, under the platforms lock) and adds one charge
+  per platform after template and member items, counted in the opening totals check.
+- Platform create/update/delete lock the open months (ascending, then again after the platforms lock to catch a month
+  opened meanwhile) and sync through the expenses port `CardCharges` in the same transaction: update pending, add
+  missing, remove pending when the card is cleared or the platform deleted. Done charges and closed months are never
+  touched. A sync that would take an open month's card charges past the money bound answers 400 on `monthlyCost`.
+- Items carry `platformId`; `PATCH`/`DELETE /period-items/{id}` answer 409 for a platform charge; marking done works.
+  Contract updated (`PeriodItem.platformId`, 409s, descriptions of open month and platform writes).
+
 ## 0.18.0 — 2026-11-09 — Ordering
 
 - D13: migration `00011_manual_order.sql` adds `position` to `period_items` (per month and kind) and

@@ -111,3 +111,8 @@ FROM (
   ) AS held ON held.ord = listed.ord
 ) AS slots
 WHERE t.id = slots.template_id;
+
+-- name: AddPlatformItem :exec
+INSERT INTO period_items (period_id, platform_id, kind, name, amount, card_id)
+VALUES ($1, $2, 'card_charge', $3, $4, $5)
+ON CONFLICT (period_id, platform_id) WHERE platform_id IS NOT NULL DO NOTHING;

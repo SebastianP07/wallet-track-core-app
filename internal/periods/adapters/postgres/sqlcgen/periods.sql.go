@@ -65,6 +65,31 @@ func (q *Queries) AddMemberItem(ctx context.Context, arg AddMemberItemParams) er
 	return err
 }
 
+const addPlatformItem = `-- name: AddPlatformItem :exec
+INSERT INTO period_items (period_id, platform_id, kind, name, amount, card_id)
+VALUES ($1, $2, 'card_charge', $3, $4, $5)
+ON CONFLICT (period_id, platform_id) WHERE platform_id IS NOT NULL DO NOTHING
+`
+
+type AddPlatformItemParams struct {
+	PeriodID   pgtype.UUID
+	PlatformID pgtype.UUID
+	Name       string
+	Amount     int64
+	CardID     pgtype.UUID
+}
+
+func (q *Queries) AddPlatformItem(ctx context.Context, arg AddPlatformItemParams) error {
+	_, err := q.db.Exec(ctx, addPlatformItem,
+		arg.PeriodID,
+		arg.PlatformID,
+		arg.Name,
+		arg.Amount,
+		arg.CardID,
+	)
+	return err
+}
+
 const carryOwedExpenses = `-- name: CarryOwedExpenses :exec
 UPDATE period_items
 SET owed_year = $1, owed_month = $2

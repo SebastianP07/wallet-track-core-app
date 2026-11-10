@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addPlatformCharges = `-- name: AddPlatformCharges :exec
+INSERT INTO period_items (period_id, platform_id, kind, name, amount, card_id)
+SELECT p.id, $1::uuid, 'card_charge', $2::text, $3::bigint, $4::uuid
+FROM periods AS p
+WHERE p.status = 'open'
+ORDER BY p.year, p.month
+ON CONFLICT (period_id, platform_id) WHERE platform_id IS NOT NULL DO NOTHING
+`
+
+type AddPlatformChargesParams struct {
+	PlatformID pgtype.UUID
+	Name       string
+	Amount     int64
+	CardID     pgtype.UUID
+}
+
+// An open month that already has the platform's charge, pending or done, keeps it (D14).
+func (q *Queries) AddPlatformCharges(ctx context.Context, arg AddPlatformChargesParams) error {
+	_, err := q.db.Exec(ctx, addPlatformCharges,
+		arg.PlatformID,
+		arg.Name,
+		arg.Amount,
+		arg.CardID,
+	)
+	return err
+}
+
 const createItem = `-- name: CreateItem :one
 INSERT INTO period_items (period_id, kind, name, amount, due_date, card_id, tag_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -57,7 +84,7 @@ func (q *Queries) DeleteItem(ctx context.Context, id pgtype.UUID) (int64, error)
 
 const getItem = `-- name: GetItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at, i.platform_id
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.id = $1
@@ -81,6 +108,7 @@ type GetItemRow struct {
 	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	PlatformID pgtype.UUID
 }
 
 func (q *Queries) GetItem(ctx context.Context, id pgtype.UUID) (GetItemRow, error) {
@@ -104,13 +132,14 @@ func (q *Queries) GetItem(ctx context.Context, id pgtype.UUID) (GetItemRow, erro
 		&i.OwedMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PlatformID,
 	)
 	return i, err
 }
 
 const getMemberItem = `-- name: GetMemberItem :one
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at, i.platform_id
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE p.year = $1 AND p.month = $2 AND i.person_id = $3 AND i.kind = 'income'
@@ -140,6 +169,7 @@ type GetMemberItemRow struct {
 	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	PlatformID pgtype.UUID
 }
 
 func (q *Queries) GetMemberItem(ctx context.Context, arg GetMemberItemParams) (GetMemberItemRow, error) {
@@ -163,6 +193,7 @@ func (q *Queries) GetMemberItem(ctx context.Context, arg GetMemberItemParams) (G
 		&i.OwedMonth,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PlatformID,
 	)
 	return i, err
 }
@@ -199,7 +230,7 @@ func (q *Queries) GetPeriod(ctx context.Context, arg GetPeriodParams) (GetPeriod
 
 const listItems = `-- name: ListItems :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at, i.platform_id
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.period_id = $1
@@ -224,6 +255,7 @@ type ListItemsRow struct {
 	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	PlatformID pgtype.UUID
 }
 
 // Section by section (04 fixed, 05 occasional, 06 income, then card charges), each in its manual order (D13).
@@ -254,6 +286,7 @@ func (q *Queries) ListItems(ctx context.Context, periodID pgtype.UUID) ([]ListIt
 			&i.OwedMonth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PlatformID,
 		); err != nil {
 			return nil, err
 		}
@@ -304,7 +337,7 @@ func (q *Queries) ListKindOrder(ctx context.Context, arg ListKindOrderParams) ([
 
 const listOverdueIncome = `-- name: ListOverdueIncome :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at, i.platform_id
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.status = 'overdue' AND p.status = 'closed' AND i.kind = 'income'
@@ -329,6 +362,7 @@ type ListOverdueIncomeRow struct {
 	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	PlatformID pgtype.UUID
 }
 
 func (q *Queries) ListOverdueIncome(ctx context.Context) ([]ListOverdueIncomeRow, error) {
@@ -358,6 +392,7 @@ func (q *Queries) ListOverdueIncome(ctx context.Context) ([]ListOverdueIncomeRow
 			&i.OwedMonth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PlatformID,
 		); err != nil {
 			return nil, err
 		}
@@ -371,7 +406,7 @@ func (q *Queries) ListOverdueIncome(ctx context.Context) ([]ListOverdueIncomeRow
 
 const listOwedItems = `-- name: ListOwedItems :many
 SELECT i.id, p.year, p.month, i.template_id, i.person_id, i.kind, i.name, i.amount, i.due_date,
-  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at
+  i.card_id, i.tag_id, i.status, i.done_at, i.owed_year, i.owed_month, i.created_at, i.updated_at, i.platform_id
 FROM period_items AS i
 JOIN periods AS p ON p.id = i.period_id
 WHERE i.owed_year = $1 AND i.owed_month = $2
@@ -401,6 +436,7 @@ type ListOwedItemsRow struct {
 	OwedMonth  pgtype.Int4
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	PlatformID pgtype.UUID
 }
 
 func (q *Queries) ListOwedItems(ctx context.Context, arg ListOwedItemsParams) ([]ListOwedItemsRow, error) {
@@ -430,6 +466,48 @@ func (q *Queries) ListOwedItems(ctx context.Context, arg ListOwedItemsParams) ([
 			&i.OwedMonth,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.PlatformID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockOpenPeriods = `-- name: LockOpenPeriods :many
+SELECT id, year, month, status
+FROM periods
+WHERE status = 'open'
+ORDER BY year, month
+FOR UPDATE
+`
+
+type LockOpenPeriodsRow struct {
+	ID     pgtype.UUID
+	Year   int32
+	Month  int32
+	Status string
+}
+
+// In ascending order, as a close and an undo take months, so these writers cannot deadlock.
+func (q *Queries) LockOpenPeriods(ctx context.Context) ([]LockOpenPeriodsRow, error) {
+	rows, err := q.db.Query(ctx, lockOpenPeriods)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockOpenPeriodsRow
+	for rows.Next() {
+		var i LockOpenPeriodsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Year,
+			&i.Month,
+			&i.Status,
 		); err != nil {
 			return nil, err
 		}
@@ -497,6 +575,38 @@ func (q *Queries) LockPeriodOfItem(ctx context.Context, id pgtype.UUID) (LockPer
 		&i.Status,
 	)
 	return i, err
+}
+
+const openCardChargesOutOfRange = `-- name: OpenCardChargesOutOfRange :one
+SELECT EXISTS (
+  SELECT 1
+  FROM period_items AS i
+  JOIN periods AS p ON p.id = i.period_id
+  WHERE p.status = 'open' AND i.kind = 'card_charge'
+  GROUP BY i.period_id
+  HAVING sum(i.amount) > $1::bigint
+)
+`
+
+// Whether some open month's card charges add up beyond the bound the contract can carry.
+func (q *Queries) OpenCardChargesOutOfRange(ctx context.Context, maxMoney int64) (bool, error) {
+	row := q.db.QueryRow(ctx, openCardChargesOutOfRange, maxMoney)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const removePlatformCharges = `-- name: RemovePlatformCharges :exec
+DELETE FROM period_items AS i
+USING periods AS p
+WHERE p.id = i.period_id AND p.status = 'open'
+  AND i.platform_id = $1::uuid AND i.status = 'pending'
+`
+
+// Only pending charges of open months go; done ones and closed months stay as history (D14).
+func (q *Queries) RemovePlatformCharges(ctx context.Context, platformID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, removePlatformCharges, platformID)
+	return err
 }
 
 const setItemPositions = `-- name: SetItemPositions :exec
@@ -586,4 +696,31 @@ func (q *Queries) UpdateItem(ctx context.Context, arg UpdateItemParams) (int64, 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updatePlatformCharges = `-- name: UpdatePlatformCharges :exec
+UPDATE period_items AS i
+SET name = $1::text, amount = $2::bigint, card_id = $3::uuid
+FROM periods AS p
+WHERE p.id = i.period_id AND p.status = 'open'
+  AND i.platform_id = $4::uuid AND i.status = 'pending'
+  AND (i.name, i.amount, i.card_id) IS DISTINCT FROM ($1::text, $2::bigint, $3::uuid)
+`
+
+type UpdatePlatformChargesParams struct {
+	Name       string
+	Amount     int64
+	CardID     pgtype.UUID
+	PlatformID pgtype.UUID
+}
+
+// A charge already done keeps what it was done with, and a row that would not change keeps its updated_at (D14).
+func (q *Queries) UpdatePlatformCharges(ctx context.Context, arg UpdatePlatformChargesParams) error {
+	_, err := q.db.Exec(ctx, updatePlatformCharges,
+		arg.Name,
+		arg.Amount,
+		arg.CardID,
+		arg.PlatformID,
+	)
+	return err
 }

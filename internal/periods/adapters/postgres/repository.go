@@ -35,28 +35,37 @@ var templateConstraints = map[string]domain.Violation{
 // MembersInTx builds the platforms port on the transaction, so a month and its items commit together.
 type MembersInTx func(tx pgx.Tx) application.MemberIncome
 
+// ChargesInTx builds the other platforms port on the transaction, for the same reason (D14).
+type ChargesInTx func(tx pgx.Tx) application.PlatformCharges
+
 type TxManager struct {
 	pool    *pgxpool.Pool
 	members MembersInTx
+	charges ChargesInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool, members MembersInTx) *TxManager {
-	return &TxManager{pool: pool, members: members}
+func NewTxManager(pool *pgxpool.Pool, members MembersInTx, charges ChargesInTx) *TxManager {
+	return &TxManager{pool: pool, members: members, charges: charges}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx), members: m.members(tx)})
+		return fn(ctx, &Repository{queries: sqlcgen.New(tx), members: m.members(tx), charges: m.charges(tx)})
 	})
 }
 
 type Repository struct {
 	queries *sqlcgen.Queries
 	members application.MemberIncome
+	charges application.PlatformCharges
 }
 
 func (r *Repository) MemberIncome() application.MemberIncome {
 	return r.members
+}
+
+func (r *Repository) PlatformCharges() application.PlatformCharges {
+	return r.charges
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
@@ -183,6 +192,28 @@ func (r *Repository) AddMemberItem(ctx context.Context, item domain.NewMemberIte
 		PersonID: personID,
 		Name:     item.Name,
 		Amount:   int64(item.Amount),
+	})
+}
+
+func (r *Repository) AddPlatformItem(ctx context.Context, item domain.NewPlatformItem) error {
+	periodID, err := parseID(item.PeriodID)
+	if err != nil {
+		return err
+	}
+	platformID, err := parseID(item.PlatformID)
+	if err != nil {
+		return err
+	}
+	cardID, err := parseID(item.CardID)
+	if err != nil {
+		return err
+	}
+	return r.queries.AddPlatformItem(ctx, sqlcgen.AddPlatformItemParams{
+		PeriodID:   periodID,
+		PlatformID: platformID,
+		Name:       item.Name,
+		Amount:     int64(item.Amount),
+		CardID:     cardID,
 	})
 }
 

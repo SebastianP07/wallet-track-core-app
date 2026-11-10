@@ -33,8 +33,12 @@ type Repository interface {
 	AddItem(ctx context.Context, item domain.NewItem) error
 	// AddMemberItem does nothing when the month already has an income item of that person (D4).
 	AddMemberItem(ctx context.Context, item domain.NewMemberItem) error
+	// AddPlatformItem does nothing when the month already has a card charge of that platform (D14).
+	AddPlatformItem(ctx context.Context, item domain.NewPlatformItem) error
 	// MemberIncome works inside this repository's transaction. Only a repository from WithinTx has it.
 	MemberIncome() MemberIncome
+	// PlatformCharges works inside this repository's transaction. Only a repository from WithinTx has it.
+	PlatformCharges() PlatformCharges
 
 	ListTemplates(ctx context.Context, filter TemplateFilter) ([]domain.Template, error)
 	// LockActiveTemplates holds the rows until the transaction ends, so that a template being cloned
@@ -54,6 +58,12 @@ type Repository interface {
 // how much (D4). A sum beyond the bound comes back as kernel.ErrMoneyOutOfRange.
 type MemberIncome interface {
 	Owing(ctx context.Context, month kernel.YearMonth) ([]domain.OwingMember, error)
+}
+
+// PlatformCharges is what this module asks of the platforms module when opening a month: every platform
+// with a card, whose card charge the month gets (D14).
+type PlatformCharges interface {
+	WithCard(ctx context.Context) ([]domain.PlatformCharge, error)
 }
 
 type TxManager interface {

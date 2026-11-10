@@ -109,3 +109,12 @@ func (c PlatformChanges) ApplyTo(platform Platform) Platform {
 	}
 	return platform
 }
+
+// CardChargesOutOfRange is what a write gets back when it would take an open month's card charges to a sum the
+// contract cannot carry (D14).
+func CardChargesOutOfRange() error {
+	return &ValidationError{Violations: []Violation{{
+		Field:   "monthlyCost",
+		Message: "would take an open month's card charges beyond 9007199254740991",
+	}}}
+}

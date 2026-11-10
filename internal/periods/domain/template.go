@@ -197,13 +197,16 @@ func TotalsOutOfRange() error {
 
 // CheckOpeningTotals keeps a month from opening with a total the contract cannot carry: every list of
 // that month would answer 500, with no way to reach its items and fix them.
-func CheckOpeningTotals(templates []Template, owing []OwingMember) error {
+func CheckOpeningTotals(templates []Template, owing []OwingMember, charges []PlatformCharge) error {
 	amounts := make(map[TemplateKind][]kernel.Money)
 	for _, template := range templates {
 		amounts[template.Kind] = append(amounts[template.Kind], template.Amount)
 	}
 	for _, member := range owing {
 		amounts[TemplateIncome] = append(amounts[TemplateIncome], member.Amount)
+	}
+	for _, charge := range charges {
+		amounts[TemplateCardCharge] = append(amounts[TemplateCardCharge], charge.Amount)
 	}
 	for _, kindAmounts := range amounts {
 		if _, err := kernel.SumMoney(kindAmounts); err != nil {

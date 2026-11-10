@@ -709,7 +709,9 @@ paths:
       summary: Open a month
       tags:
       - Periods
-      description: 'Idempotent on retry: templates are cloned once per month.'
+      description: 'Idempotent on retry: templates are cloned once per month. A month this call creates also gets
+        one income item per owing platform member (D4) and one pending card charge per platform with a card
+        (D14), after the template items.'
       parameters:
       - $ref: '#/components/parameters/CsrfToken'
       requestBody:
@@ -957,7 +959,8 @@ paths:
       summary: Edit an item
       tags:
       - Period items
-      description: Affects this month only, never its template.
+      description: Affects this month only, never its template. A platform's card charge (`platformId` set)
+        answers 409; edit the platform instead (D14).
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -982,6 +985,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
     delete:
       operationId: deletePeriodItem
       summary: Delete an item
@@ -991,7 +996,8 @@ paths:
         stays, as history, with its coverage. With `stopRepeating=true` the same transaction also deactivates
         the item's template, if it has one, so no month opened from then on gets it; the template is kept,
         inactive, and items of other months, paid or not, stay as they are. An overdue expense deleted from
-        its month of origin leaves the totals of the month that owed it (D1, D7).
+        its month of origin leaves the totals of the month that owed it (D1, D7). A platform's card charge
+        (`platformId` set) answers 409; remove the platform's card or the platform instead (D14).
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -1012,6 +1018,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /period-items/{id}/done:
     put:
       operationId: markPeriodItemDone
@@ -1616,6 +1624,7 @@ paths:
       summary: Create a platform
       tags:
       - Platforms
+      description: A platform with a card also puts its pending card charge in every open month (D14).
       parameters:
       - $ref: '#/components/parameters/CsrfToken'
       requestBody:
@@ -1663,6 +1672,10 @@ paths:
       summary: Edit a platform
       tags:
       - Platforms
+      description: 'The platform''s card charge follows it in every open month while pending (D14): a new card adds
+        it where a month has none, a name, cost or card change updates it, and clearing the card removes it.
+        Done charges and closed months stay as they are. Members'' income items already in a month keep their
+        amount (D4).'
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -1692,6 +1705,8 @@ paths:
       summary: Delete a platform
       tags:
       - Platforms
+      description: Also removes the platform's pending card charges of open months; done ones and closed months
+        keep theirs, no longer linked (D14).
       parameters:
       - $ref: '#/components/parameters/Id'
       - $ref: '#/components/parameters/CsrfToken'
@@ -2572,6 +2587,7 @@ components:
       - dueDate
       - templateId
       - personId
+      - platformId
       - cardId
       - tagId
       - status
@@ -2602,6 +2618,15 @@ components:
           - type: 'null'
         personId:
           description: Platform member this income item is for (D4).
+          oneOf:
+          - $ref: '#/components/schemas/Id'
+          - type: 'null'
+        platformId:
+          description: 'Platform whose card charge this is (D14). Every month opened, and every open month when the
+            platform changes, gets one such pending charge per platform with a card, named and priced after it;
+            only the platform edits or removes it, so `updatePeriodItem` and `deletePeriodItem` answer 409, while
+            marking it done works as on any card charge. Null on every other item, and on a done charge once its
+            platform is deleted.'
           oneOf:
           - $ref: '#/components/schemas/Id'
           - type: 'null'

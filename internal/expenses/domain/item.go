@@ -1,6 +1,6 @@
 // Package domain holds the rules of a month's items: urgency (D11), Por pagar and Por llegar (D1), the
 // done toggle and the overdue items a month owes (D7), and card charges, which are informational and stay
-// out of every total (D3).
+// out of every total (D3), some of them kept by their platform (D14).
 package domain
 
 import (
@@ -40,6 +40,9 @@ var (
 	ErrMonthClosed = errors.New("month is closed")
 	// ErrTotalOutOfRange means a month's total lies beyond kernel.MaxMoney.
 	ErrTotalOutOfRange = errors.New("item total out of range")
+	// ErrKeptByPlatform means the item is a platform's card charge, which only its platform edits or removes
+	// (D14).
+	ErrKeptByPlatform = errors.New("item is kept by its platform")
 )
 
 // Violation names one rejected value.
@@ -121,6 +124,9 @@ type Item struct {
 	Month      kernel.YearMonth
 	TemplateID *string
 	PersonID   *string
+	// PlatformID is the platform whose card charge this is, kept in step with it while pending in an open
+	// month (D14).
+	PlatformID *string
 	Kind       ItemKind
 	Name       string
 	Amount     kernel.Money
@@ -178,6 +184,11 @@ func (i Item) UndoneOwedFrom() kernel.YearMonth {
 // NeedsOwedMonth says whether undoing this item makes a later month owe it, so the caller has to find one.
 func (i Item) NeedsOwedMonth(period Period) bool {
 	return i.Status == StatusDone && period.Status == PeriodClosed && IsExpense(i.Kind)
+}
+
+// KeptByPlatform says whether only the item's platform can edit or remove it; marking it done stays open (D14).
+func (i Item) KeptByPlatform() bool {
+	return i.PlatformID != nil
 }
 
 // Matches says whether an item passes a list's filters. A nil field passes everything.
@@ -262,6 +273,14 @@ func CreateNewItem(input NewItemInput) (NewItem, error) {
 		return NewItem{}, &ValidationError{Violations: violations}
 	}
 	return item, nil
+}
+
+// PlatformCharge is what a platform with a card puts in every open month as a card charge (D14).
+type PlatformCharge struct {
+	PlatformID string
+	Name       string
+	Amount     kernel.Money
+	CardID     string
 }
 
 // OptionalID is a nullable field of an edit: unset leaves it as it is, and a nil Value clears it.

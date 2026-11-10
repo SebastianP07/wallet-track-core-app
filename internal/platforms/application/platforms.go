@@ -2,8 +2,10 @@ package application
 
 import (
 	"context"
+	"errors"
 
 	"github.com/SebastianP07/wallet-track-core-app/internal/platforms/domain"
+	"github.com/SebastianP07/wallet-track-core-app/internal/shared/kernel"
 )
 
 type ListPlatforms struct {
@@ -38,15 +40,19 @@ func NewCreatePlatform(tx TxManager) *CreatePlatform {
 	return &CreatePlatform{tx: tx}
 }
 
+// Execute also gives every open month the platform's card charge when it has a card (D14).
 func (u *CreatePlatform) Execute(ctx context.Context, platform domain.NewPlatform) (domain.Platform, error) {
 	var created domain.Platform
 	err := u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
-		if err := repo.LockPlatforms(ctx); err != nil {
+		if err := lockWithOpenMonths(ctx, repo); err != nil {
 			return err
 		}
 		var err error
 		created, err = repo.CreatePlatform(ctx, platform)
-		return err
+		if err != nil {
+			return err
+		}
+		return syncCharges(ctx, repo, created)
 	})
 	return created, err
 }
@@ -59,12 +65,12 @@ func NewUpdatePlatform(tx TxManager) *UpdatePlatform {
 	return &UpdatePlatform{tx: tx}
 }
 
-// Execute affects months opened from now on. Items already in a month keep their amount, as with
-// templates.
+// Execute affects members' income in months opened from now on: income items already in a month keep their
+// amount, as with templates. The platform's card charge follows it in every open month while pending (D14).
 func (u *UpdatePlatform) Execute(ctx context.Context, id string, changes domain.PlatformChanges) (domain.Platform, error) {
 	var updated domain.Platform
 	err := u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
-		if err := repo.LockPlatforms(ctx); err != nil {
+		if err := lockWithOpenMonths(ctx, repo); err != nil {
 			return err
 		}
 		platform, err := repo.GetPlatform(ctx, id)
@@ -75,7 +81,10 @@ func (u *UpdatePlatform) Execute(ctx context.Context, id string, changes domain.
 		if err != nil {
 			return err
 		}
-		return checkOwed(ctx, repo)
+		if err := checkOwed(ctx, repo); err != nil {
+			return err
+		}
+		return syncCharges(ctx, repo, updated)
 	})
 	return updated, err
 }
@@ -88,9 +97,14 @@ func NewDeletePlatform(tx TxManager) *DeletePlatform {
 	return &DeletePlatform{tx: tx}
 }
 
+// Execute removes the platform's pending card charges of open months first; done ones stay, unlinked, as
+// history (D14).
 func (u *DeletePlatform) Execute(ctx context.Context, id string) error {
 	return u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
-		if err := repo.LockPlatforms(ctx); err != nil {
+		if err := lockWithOpenMonths(ctx, repo); err != nil {
+			return err
+		}
+		if err := repo.CardCharges().Remove(ctx, id); err != nil {
 			return err
 		}
 		found, err := repo.DeletePlatform(ctx, id)
@@ -162,4 +176,54 @@ func changeMembers(
 		return err
 	})
 	return platform, err
+}
+
+// lockWithOpenMonths takes the open months' rows before the platforms lock, the order every writer follows. A
+// month opened while this waited for the platforms lock read the platforms as they were, so it is locked too,
+// and the write brings its charge up to date.
+func lockWithOpenMonths(ctx context.Context, repo Repository) error {
+	charges := repo.CardCharges()
+	if err := charges.LockOpenMonths(ctx); err != nil {
+		return err
+	}
+	if err := repo.LockPlatforms(ctx); err != nil {
+		return err
+	}
+	return charges.LockOpenMonths(ctx)
+}
+
+func syncCharges(ctx context.Context, repo Repository, platform domain.Platform) error {
+	err := repo.CardCharges().Sync(ctx, platform.ID, platform.Name, platform.MonthlyCost, platform.CardID)
+	if errors.Is(err, kernel.ErrMoneyOutOfRange) {
+		return domain.CardChargesOutOfRange()
+	}
+	return err
+}
+
+// ChargingPlatforms is what the periods module asks of this one when opening a month (D14). Built on a
+// repository from WithinTx, it runs in that month's transaction.
+type ChargingPlatforms struct {
+	repo Repository
+}
+
+func NewChargingPlatforms(repo Repository) *ChargingPlatforms {
+	return &ChargingPlatforms{repo: repo}
+}
+
+// WithCard is every platform with a card, by name, as the platforms lock holds them.
+func (c *ChargingPlatforms) WithCard(ctx context.Context) ([]domain.Platform, error) {
+	if err := c.repo.LockPlatforms(ctx); err != nil {
+		return nil, err
+	}
+	platforms, err := c.repo.ListPlatforms(ctx)
+	if err != nil {
+		return nil, err
+	}
+	withCard := make([]domain.Platform, 0, len(platforms))
+	for _, platform := range platforms {
+		if platform.CardID != nil {
+			withCard = append(withCard, platform)
+		}
+	}
+	return withCard, nil
 }

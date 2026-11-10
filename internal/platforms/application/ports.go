@@ -27,12 +27,26 @@ type IncomeItems interface {
 	Unmark(ctx context.Context, itemID string) error
 }
 
+// CardCharges is what this module asks of the open months' card charges when a platform changes (D14). Every
+// writer takes the months' rows before the platforms lock, so LockOpenMonths comes first.
+type CardCharges interface {
+	LockOpenMonths(ctx context.Context) error
+	// Sync gives every open month the platform's pending charge, as it is now, or removes the pending ones when
+	// it has no card. Done charges and closed months stay as they are. It returns kernel.ErrMoneyOutOfRange when
+	// an open month's card charges would add up beyond the bound.
+	Sync(ctx context.Context, platformID, name string, amount kernel.Money, cardID *string) error
+	// Remove deletes the platform's pending charges of open months.
+	Remove(ctx context.Context, platformID string) error
+}
+
 type Repository interface {
 	// LockPlatforms holds every platform, membership and person until the transaction ends. Each write
 	// to them takes it first, so checks of what people owe and a month's items see one state.
 	LockPlatforms(ctx context.Context) error
 	// IncomeItems works inside this repository's transaction. Only a repository from WithinTx has it.
 	IncomeItems() IncomeItems
+	// CardCharges works inside this repository's transaction. Only a repository from WithinTx has it.
+	CardCharges() CardCharges
 
 	ListPeople(ctx context.Context) ([]domain.Person, error)
 	GetPerson(ctx context.Context, id string) (domain.Person, error)

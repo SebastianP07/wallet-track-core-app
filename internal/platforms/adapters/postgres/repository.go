@@ -34,24 +34,30 @@ var (
 // ItemsInTx builds the expenses port on the transaction, so a payment and its item commit together.
 type ItemsInTx func(tx pgx.Tx) application.IncomeItems
 
+// ChargesInTx builds the other expenses port on the transaction, so a platform and its card charges commit
+// together (D14).
+type ChargesInTx func(tx pgx.Tx) application.CardCharges
+
 type TxManager struct {
-	pool  *pgxpool.Pool
-	items ItemsInTx
+	pool    *pgxpool.Pool
+	items   ItemsInTx
+	charges ChargesInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool, items ItemsInTx) *TxManager {
-	return &TxManager{pool: pool, items: items}
+func NewTxManager(pool *pgxpool.Pool, items ItemsInTx, charges ChargesInTx) *TxManager {
+	return &TxManager{pool: pool, items: items, charges: charges}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx), items: m.items(tx)})
+		return fn(ctx, &Repository{queries: sqlcgen.New(tx), items: m.items(tx), charges: m.charges(tx)})
 	})
 }
 
 type Repository struct {
 	queries *sqlcgen.Queries
 	items   application.IncomeItems
+	charges application.CardCharges
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
@@ -69,6 +75,10 @@ func (r *Repository) LockPlatforms(ctx context.Context) error {
 
 func (r *Repository) IncomeItems() application.IncomeItems {
 	return r.items
+}
+
+func (r *Repository) CardCharges() application.CardCharges {
+	return r.charges
 }
 
 func (r *Repository) ListPeople(ctx context.Context) ([]domain.Person, error) {

@@ -190,6 +190,9 @@ func (u *UpdateItem) Execute(ctx context.Context, id string, changes domain.Item
 		if index < 0 {
 			return domain.ErrItemNotFound
 		}
+		if items[index].KeptByPlatform() {
+			return domain.ErrKeptByPlatform
+		}
 		changed, err := changes.ApplyTo(items[index])
 		if err != nil {
 			return err
@@ -217,21 +220,23 @@ func NewDeleteItem(tx TxManager) *DeleteItem {
 
 // Execute removes the item from its own month only. With stopRepeating it also deactivates the item's
 // template in the same transaction, so months opened from now on stop getting it. Items of other months,
-// paid or not, stay as they are. An overdue item leaves the totals of the month that owed it (D1, D7).
+// paid or not, stay as they are. An overdue item leaves the totals of the month that owed it (D1, D7). A
+// platform's card charge goes only with its platform's card (D14).
 func (u *DeleteItem) Execute(ctx context.Context, id string, stopRepeating bool) error {
 	return u.tx.WithinTx(ctx, func(ctx context.Context, repo Repository) error {
 		if _, err := repo.LockPeriodOfItem(ctx, id); err != nil {
 			return err
 		}
-		if stopRepeating {
-			item, err := repo.GetItem(ctx, id)
-			if err != nil {
-				return err
-			}
-			if item.TemplateID != nil {
-				if err := repo.Templates().Stop(ctx, *item.TemplateID); err != nil {
-					return fmt.Errorf("stop template: %w", err)
-				}
+		item, err := repo.GetItem(ctx, id)
+		if err != nil {
+			return err
+		}
+		if item.KeptByPlatform() {
+			return domain.ErrKeptByPlatform
+		}
+		if stopRepeating && item.TemplateID != nil {
+			if err := repo.Templates().Stop(ctx, *item.TemplateID); err != nil {
+				return fmt.Errorf("stop template: %w", err)
 			}
 		}
 		found, err := repo.DeleteItem(ctx, id)
@@ -476,4 +481,54 @@ func (m *MemberItems) Unmark(ctx context.Context, itemID string) error {
 	}
 	_, err = m.repo.SetItemStatus(ctx, undone)
 	return err
+}
+
+// PlatformCharges is what the platforms module asks of this one when a platform changes, so that every open
+// month's card charge of that platform follows it in the same transaction (D14). Built on a repository from
+// WithinTx, it runs in that platform write's transaction.
+type PlatformCharges struct {
+	repo Repository
+}
+
+func NewPlatformCharges(repo Repository) *PlatformCharges {
+	return &PlatformCharges{repo: repo}
+}
+
+// LockOpenMonths holds every open month's row, oldest first, as every item write takes its month first.
+func (c *PlatformCharges) LockOpenMonths(ctx context.Context) error {
+	return c.repo.LockOpenPeriods(ctx)
+}
+
+// Sync makes each open month's charge of the platform match it: a platform with a card gets a pending charge
+// where a month has none, and its pending ones take its name, cost and card; a platform with no card loses
+// its pending ones. Done charges and closed months stay as they are. It returns kernel.ErrMoneyOutOfRange when
+// an open month's card charges would add up to more than the contract can carry.
+func (c *PlatformCharges) Sync(ctx context.Context, platformID, name string, amount kernel.Money, cardID *string) error {
+	if cardID == nil {
+		return c.Remove(ctx, platformID)
+	}
+	charge := domain.PlatformCharge{PlatformID: platformID, Name: name, Amount: amount, CardID: *cardID}
+	if err := c.repo.UpdatePlatformCharges(ctx, charge); err != nil {
+		return fmt.Errorf("update platform charges: %w", err)
+	}
+	if err := c.repo.AddPlatformCharges(ctx, charge); err != nil {
+		return fmt.Errorf("add platform charges: %w", err)
+	}
+	outOfRange, err := c.repo.OpenCardChargesOutOfRange(ctx)
+	if err != nil {
+		return fmt.Errorf("check card charge totals: %w", err)
+	}
+	if outOfRange {
+		return fmt.Errorf("%w: card charges of an open month", kernel.ErrMoneyOutOfRange)
+	}
+	return nil
+}
+
+// Remove deletes the platform's pending charges of open months, before the platform itself goes. Done ones
+// stay, unlinked once the platform is deleted, as history.
+func (c *PlatformCharges) Remove(ctx context.Context, platformID string) error {
+	if err := c.repo.RemovePlatformCharges(ctx, platformID); err != nil {
+		return fmt.Errorf("remove platform charges: %w", err)
+	}
+	return nil
 }

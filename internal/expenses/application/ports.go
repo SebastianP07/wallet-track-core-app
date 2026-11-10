@@ -41,6 +41,16 @@ type Repository interface {
 	SetItemOrder(ctx context.Context, ids []string) error
 	// GetMemberItem returns domain.ErrItemNotFound when the person has no item in that month, opened or not.
 	GetMemberItem(ctx context.Context, personID string, month kernel.YearMonth) (domain.Item, error)
+	// LockOpenPeriods holds the row of every open month, oldest first, until the transaction ends.
+	LockOpenPeriods(ctx context.Context) error
+	// UpdatePlatformCharges gives the platform's pending charges of open months its name, cost and card (D14).
+	UpdatePlatformCharges(ctx context.Context, charge domain.PlatformCharge) error
+	// AddPlatformCharges adds the platform's pending charge to every open month that has none of it (D14).
+	AddPlatformCharges(ctx context.Context, charge domain.PlatformCharge) error
+	// RemovePlatformCharges deletes the platform's pending charges of open months (D14).
+	RemovePlatformCharges(ctx context.Context, platformID string) error
+	// OpenCardChargesOutOfRange says whether some open month's card charges add up beyond kernel.MaxMoney.
+	OpenCardChargesOutOfRange(ctx context.Context) (bool, error)
 	// MemberPayments works inside this repository's transaction. Only a repository from WithinTx has it.
 	MemberPayments() MemberPayments
 	// Templates works inside this repository's transaction. Only a repository from WithinTx has it.
