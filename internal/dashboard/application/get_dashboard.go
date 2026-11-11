@@ -94,7 +94,7 @@ func (u *GetDashboard) Execute(ctx context.Context, month kernel.YearMonth) (Das
 	}
 	return Dashboard{
 		Period:         period,
-		Kpis:           domain.ComputeKpis(accounts, items.Totals),
+		Kpis:           domain.ComputeKpis(accounts, items.Totals, period.OpeningBalance),
 		ToPayBreakdown: domain.BreakdownOf(items.Totals),
 		Accounts:       accounts,
 		Items:          items,

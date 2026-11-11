@@ -65,12 +65,13 @@ type PasskeyChallenge struct {
 }
 
 type Period struct {
-	ID        pgtype.UUID
-	Year      int32
-	Month     int32
-	Status    string
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
+	ID             pgtype.UUID
+	Year           int32
+	Month          int32
+	Status         string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	OpeningBalance pgtype.Int8
 }
 
 type PeriodItem struct {

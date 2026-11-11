@@ -43,6 +43,11 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{queries: sqlcgen.New(pool)}
 }
 
+// NewRepositoryInTx is this module's repository on another module's transaction, for the ports it serves.
+func NewRepositoryInTx(tx pgx.Tx) *Repository {
+	return &Repository{queries: sqlcgen.New(tx)}
+}
+
 func (r *Repository) List(ctx context.Context) ([]domain.Account, error) {
 	rows, err := r.queries.ListAccounts(ctx)
 	if err != nil {

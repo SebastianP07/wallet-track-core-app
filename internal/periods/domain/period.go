@@ -36,11 +36,30 @@ const (
 )
 
 type Period struct {
-	ID        string
-	Month     kernel.YearMonth
-	Status    PeriodStatus
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     string
+	Month  kernel.YearMonth
+	Status PeriodStatus
+	// OpeningBalance is what the accounts held when the month began: Total actual when the month was opened, or
+	// what the owner set. Nil when nobody knows it. It is informational and changes no total.
+	OpeningBalance *kernel.Money
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// OpeningBalanceMessage is the one wording of the opening balance's bound.
+const OpeningBalanceMessage = "must be whole pesos between -9007199254740991 and 9007199254740991, or null"
+
+// NewOpeningBalance checks a value the owner typed; nil clears the month's opening balance. It may be negative,
+// like Total actual.
+func NewOpeningBalance(raw *int64) (*kernel.Money, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	amount, err := kernel.NewMoney(*raw)
+	if err != nil {
+		return nil, &ValidationError{Violations: []Violation{{Field: "openingBalance", Message: OpeningBalanceMessage}}}
+	}
+	return &amount, nil
 }
 
 type ItemKind string

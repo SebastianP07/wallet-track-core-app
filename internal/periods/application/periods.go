@@ -49,7 +49,7 @@ func NewOpenPeriod(tx TxManager) *OpenPeriod {
 	return &OpenPeriod{tx: tx}
 }
 
-// Execute clones the active templates, adds one income item per owing platform member (D4) and one card
+// Execute snapshots Total actual as the month's opening balance and clones the active templates, adds one income item per owing platform member (D4) and one card
 // charge per platform with a card (D14) only when it creates the month, so a retry changes nothing, not even
 // in a month that a template, a platform or a payment changed after. Concurrent opens wait on the period's
 // unique key, and only the first one to commit adds anything.
@@ -107,10 +107,45 @@ func (u *OpenPeriod) Execute(ctx context.Context, month kernel.YearMonth) (Opene
 				return fmt.Errorf("add platform item: %w", err)
 			}
 		}
+		period, err = snapshotOpeningBalance(ctx, repo, period)
+		if err != nil {
+			return err
+		}
 		opened = OpenedPeriod{Period: period, Created: true}
 		return nil
 	})
 	return opened, err
+}
+
+// snapshotOpeningBalance keeps Total actual as the month's opening balance. A total past the bound leaves it
+// unknown rather than keeping the month from opening: the owner can still set it by hand.
+func snapshotOpeningBalance(ctx context.Context, repo Repository, period domain.Period) (domain.Period, error) {
+	total, err := repo.AccountBalances().CurrentTotal(ctx)
+	if errors.Is(err, kernel.ErrMoneyOutOfRange) {
+		return period, nil
+	}
+	if err != nil {
+		return domain.Period{}, fmt.Errorf("read current total: %w", err)
+	}
+	period, err = repo.SetOpeningBalance(ctx, period.Month, &total)
+	if err != nil {
+		return domain.Period{}, fmt.Errorf("set opening balance: %w", err)
+	}
+	return period, nil
+}
+
+type SetOpeningBalance struct {
+	repo Repository
+}
+
+func NewSetOpeningBalance(repo Repository) *SetOpeningBalance {
+	return &SetOpeningBalance{repo: repo}
+}
+
+// Execute sets or, with nil, clears the month's opening balance, whether the month is open or closed: it is
+// informational and moves no item or balance.
+func (u *SetOpeningBalance) Execute(ctx context.Context, month kernel.YearMonth, amount *kernel.Money) (domain.Period, error) {
+	return u.repo.SetOpeningBalance(ctx, month, amount)
 }
 
 type ClosePeriod struct {

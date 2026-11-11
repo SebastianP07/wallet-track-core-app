@@ -38,26 +38,41 @@ type MembersInTx func(tx pgx.Tx) application.MemberIncome
 // ChargesInTx builds the other platforms port on the transaction, for the same reason (D14).
 type ChargesInTx func(tx pgx.Tx) application.PlatformCharges
 
+// BalancesInTx builds the accounts port on the transaction, so the opening balance is the total the month
+// opened with.
+type BalancesInTx func(tx pgx.Tx) application.AccountBalances
+
 type TxManager struct {
-	pool    *pgxpool.Pool
-	members MembersInTx
-	charges ChargesInTx
+	pool     *pgxpool.Pool
+	members  MembersInTx
+	charges  ChargesInTx
+	balances BalancesInTx
 }
 
-func NewTxManager(pool *pgxpool.Pool, members MembersInTx, charges ChargesInTx) *TxManager {
-	return &TxManager{pool: pool, members: members, charges: charges}
+func NewTxManager(pool *pgxpool.Pool, members MembersInTx, charges ChargesInTx, balances BalancesInTx) *TxManager {
+	return &TxManager{pool: pool, members: members, charges: charges, balances: balances}
 }
 
 func (m *TxManager) WithinTx(ctx context.Context, fn func(ctx context.Context, repo application.Repository) error) error {
 	return pgx.BeginFunc(ctx, m.pool, func(tx pgx.Tx) error {
-		return fn(ctx, &Repository{queries: sqlcgen.New(tx), members: m.members(tx), charges: m.charges(tx)})
+		return fn(ctx, &Repository{
+			queries:  sqlcgen.New(tx),
+			members:  m.members(tx),
+			charges:  m.charges(tx),
+			balances: m.balances(tx),
+		})
 	})
 }
 
 type Repository struct {
-	queries *sqlcgen.Queries
-	members application.MemberIncome
-	charges application.PlatformCharges
+	queries  *sqlcgen.Queries
+	members  application.MemberIncome
+	charges  application.PlatformCharges
+	balances application.AccountBalances
+}
+
+func (r *Repository) AccountBalances() application.AccountBalances {
+	return r.balances
 }
 
 func (r *Repository) MemberIncome() application.MemberIncome {
@@ -116,6 +131,18 @@ func (r *Repository) MarkPeriodClosed(ctx context.Context, id string) (domain.Pe
 		return domain.Period{}, err
 	}
 	row, err := r.queries.MarkPeriodClosed(ctx, uuid)
+	return toPeriodOrNotFound(row, err)
+}
+
+func (r *Repository) SetOpeningBalance(ctx context.Context, month kernel.YearMonth, amount *kernel.Money) (domain.Period, error) {
+	columns := monthColumns(month)
+	var opening pgtype.Int8
+	if amount != nil {
+		opening = pgtype.Int8{Int64: int64(*amount), Valid: true}
+	}
+	row, err := r.queries.SetPeriodOpeningBalance(ctx, sqlcgen.SetPeriodOpeningBalanceParams{
+		OpeningBalance: opening, Year: columns.Year, Month: columns.Month,
+	})
 	return toPeriodOrNotFound(row, err)
 }
 
@@ -407,12 +434,21 @@ func toPeriodOrNotFound(row sqlcgen.Period, err error) (domain.Period, error) {
 
 func toPeriod(row sqlcgen.Period) domain.Period {
 	return domain.Period{
-		ID:        row.ID.String(),
-		Month:     kernel.YearMonth{Year: int(row.Year), Month: time.Month(row.Month)},
-		Status:    domain.PeriodStatus(row.Status),
-		CreatedAt: row.CreatedAt.Time,
-		UpdatedAt: row.UpdatedAt.Time,
+		ID:             row.ID.String(),
+		Month:          kernel.YearMonth{Year: int(row.Year), Month: time.Month(row.Month)},
+		Status:         domain.PeriodStatus(row.Status),
+		OpeningBalance: toOpeningBalance(row.OpeningBalance),
+		CreatedAt:      row.CreatedAt.Time,
+		UpdatedAt:      row.UpdatedAt.Time,
 	}
+}
+
+func toOpeningBalance(column pgtype.Int8) *kernel.Money {
+	if !column.Valid {
+		return nil
+	}
+	amount := kernel.Money(column.Int64)
+	return &amount
 }
 
 func toTemplateOrNotFound(row sqlcgen.RecurringTemplate, err error) (domain.Template, error) {

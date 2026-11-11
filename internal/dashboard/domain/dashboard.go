@@ -21,11 +21,13 @@ const (
 )
 
 type Period struct {
-	ID        string
-	Month     kernel.YearMonth
-	Status    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     string
+	Month  kernel.YearMonth
+	Status string
+	// OpeningBalance is what the accounts held when the month began; nil when unknown.
+	OpeningBalance *kernel.Money
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type Account struct {
@@ -142,6 +144,13 @@ type Kpis struct {
 	Incoming     kernel.Money
 	Outgoing     kernel.Money
 	Balance      kernel.Money
+	// OpeningBalance is the month's, nil when unknown. ExpectedClose is OpeningBalance + Balance: what the
+	// accounts should hold once every item of the month is settled. Mismatch is Surplus - ExpectedClose: zero
+	// when the month squares, positive when there is more money than the items explain. Both are nil while
+	// the opening balance is.
+	OpeningBalance *kernel.Money
+	ExpectedClose  *kernel.Money
+	Mismatch       *kernel.Money
 }
 
 type ToPayBreakdown struct {
@@ -154,9 +163,9 @@ type ToPayBreakdown struct {
 // but no write sees balances and items together, so Surplus can pass it with nothing wrong in either, and
 // an error would take down the page where the user fixes that. Every input lies within the bound, so the
 // arithmetic itself fits an int64.
-func ComputeKpis(accounts Accounts, totals ItemTotals) Kpis {
+func ComputeKpis(accounts Accounts, totals ItemTotals, opening *kernel.Money) Kpis {
 	outgoing := totals.Fixed.Total + totals.Occasional.Total + totals.Overdue.Total
-	return Kpis{
+	kpis := Kpis{
 		CurrentTotal: accounts.CurrentTotal,
 		ToPay:        totals.ToPay,
 		ToReceive:    totals.ToReceive,
@@ -165,6 +174,15 @@ func ComputeKpis(accounts Accounts, totals ItemTotals) Kpis {
 		Outgoing:     withinBound(outgoing),
 		Balance:      withinBound(totals.Income.Total - outgoing),
 	}
+	if opening != nil {
+		openingBalance := *opening
+		expectedClose := withinBound(openingBalance + kpis.Balance)
+		mismatch := withinBound(kpis.Surplus - expectedClose)
+		kpis.OpeningBalance = &openingBalance
+		kpis.ExpectedClose = &expectedClose
+		kpis.Mismatch = &mismatch
+	}
+	return kpis
 }
 
 func withinBound(amount kernel.Money) kernel.Money {

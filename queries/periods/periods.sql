@@ -1,15 +1,15 @@
 -- name: ListPeriods :many
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 ORDER BY year DESC, month DESC;
 
 -- name: GetPeriod :one
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 WHERE year = $1 AND month = $2;
 
 -- name: LockPeriod :one
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 WHERE year = $1 AND month = $2
 FOR UPDATE;
@@ -18,13 +18,19 @@ FOR UPDATE;
 INSERT INTO periods (year, month)
 VALUES ($1, $2)
 ON CONFLICT (year, month) DO NOTHING
-RETURNING id, year, month, status, created_at, updated_at;
+RETURNING id, year, month, status, created_at, updated_at, opening_balance;
 
 -- name: MarkPeriodClosed :one
 UPDATE periods
 SET status = 'closed'
 WHERE id = $1
-RETURNING id, year, month, status, created_at, updated_at;
+RETURNING id, year, month, status, created_at, updated_at, opening_balance;
+
+-- name: SetPeriodOpeningBalance :one
+UPDATE periods
+SET opening_balance = @opening_balance
+WHERE year = @year AND month = @month
+RETURNING id, year, month, status, created_at, updated_at, opening_balance;
 
 -- name: MarkPendingIncomeOverdue :exec
 UPDATE period_items

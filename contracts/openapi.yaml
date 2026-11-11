@@ -760,6 +760,38 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updatePeriod
+      summary: Set or clear a month's opening balance
+      tags:
+      - Periods
+      description: The opening balance is what the accounts held when the month began. Opening a month sets
+        it to Total actual at that moment; this call overrides it, or clears it with null. Allowed on open
+        and closed months alike, because it is informational and changes no item, balance or total (D6).
+      parameters:
+      - $ref: '#/components/parameters/Period'
+      - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PeriodUpdate'
+      responses:
+        '200':
+          description: Opening balance updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Period'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /periods/{period}/close:
     post:
       operationId: closePeriod
@@ -2519,6 +2551,7 @@ components:
       - id
       - period
       - status
+      - openingBalance
       - createdAt
       - updatedAt
       properties:
@@ -2528,6 +2561,12 @@ components:
           $ref: '#/components/schemas/YearMonth'
         status:
           $ref: '#/components/schemas/PeriodStatus'
+        openingBalance:
+          oneOf:
+          - $ref: '#/components/schemas/Money'
+          - type: 'null'
+          description: What the accounts held when the month began. Snapshot of Total actual when the month
+            was opened, or set by the owner; null when unknown (months opened before it existed).
         createdAt:
           $ref: '#/components/schemas/Timestamp'
         updatedAt:
@@ -2542,6 +2581,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Period'
+      additionalProperties: false
+    PeriodUpdate:
+      type: object
+      required:
+      - openingBalance
+      properties:
+        openingBalance:
+          oneOf:
+          - $ref: '#/components/schemas/Money'
+          - type: 'null'
+          description: The month's opening balance; null clears it.
       additionalProperties: false
     PeriodOpenRequest:
       type: object
@@ -3419,6 +3469,9 @@ components:
       - incoming
       - outgoing
       - balance
+      - openingBalance
+      - expectedClose
+      - mismatch
       properties:
         currentTotal:
           allOf:
@@ -3452,6 +3505,23 @@ components:
           allOf:
           - $ref: '#/components/schemas/Money'
           description: 'Balance: incoming - outgoing (D2).'
+        openingBalance:
+          oneOf:
+          - $ref: '#/components/schemas/Money'
+          - type: 'null'
+          description: 'Inicio del mes: the period''s opening balance; null when unknown.'
+        expectedClose:
+          oneOf:
+          - $ref: '#/components/schemas/Money'
+          - type: 'null'
+          description: 'Cierre esperado: openingBalance + balance, stopping at the money bound in either
+            direction. Null when openingBalance is.'
+        mismatch:
+          oneOf:
+          - $ref: '#/components/schemas/Money'
+          - type: 'null'
+          description: 'Descuadre: surplus - expectedClose, stopping at the money bound. Zero when the month
+            squares; positive when the accounts hold more than the items explain. Null when openingBalance is.'
       additionalProperties: false
     ToPayBreakdown:
       type: object

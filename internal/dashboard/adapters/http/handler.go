@@ -42,21 +42,25 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 type periodResponse struct {
-	ID        string    `json:"id"`
-	Period    string    `json:"period"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Period         string    `json:"period"`
+	Status         string    `json:"status"`
+	OpeningBalance *int64    `json:"openingBalance"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type kpisResponse struct {
-	CurrentTotal int64 `json:"currentTotal"`
-	ToPay        int64 `json:"toPay"`
-	ToReceive    int64 `json:"toReceive"`
-	Surplus      int64 `json:"surplus"`
-	Incoming     int64 `json:"incoming"`
-	Outgoing     int64 `json:"outgoing"`
-	Balance      int64 `json:"balance"`
+	CurrentTotal   int64  `json:"currentTotal"`
+	ToPay          int64  `json:"toPay"`
+	ToReceive      int64  `json:"toReceive"`
+	Surplus        int64  `json:"surplus"`
+	Incoming       int64  `json:"incoming"`
+	Outgoing       int64  `json:"outgoing"`
+	Balance        int64  `json:"balance"`
+	OpeningBalance *int64 `json:"openingBalance"`
+	ExpectedClose  *int64 `json:"expectedClose"`
+	Mismatch       *int64 `json:"mismatch"`
 }
 
 type toPayBreakdownResponse struct {
@@ -216,20 +220,24 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 func toResponse(d application.Dashboard) dashboardResponse {
 	return dashboardResponse{
 		Period: periodResponse{
-			ID:        d.Period.ID,
-			Period:    d.Period.Month.String(),
-			Status:    d.Period.Status,
-			CreatedAt: d.Period.CreatedAt,
-			UpdatedAt: d.Period.UpdatedAt,
+			ID:             d.Period.ID,
+			Period:         d.Period.Month.String(),
+			Status:         d.Period.Status,
+			OpeningBalance: optionalAmount(d.Period.OpeningBalance),
+			CreatedAt:      d.Period.CreatedAt,
+			UpdatedAt:      d.Period.UpdatedAt,
 		},
 		Kpis: kpisResponse{
-			CurrentTotal: int64(d.Kpis.CurrentTotal),
-			ToPay:        int64(d.Kpis.ToPay),
-			ToReceive:    int64(d.Kpis.ToReceive),
-			Surplus:      int64(d.Kpis.Surplus),
-			Incoming:     int64(d.Kpis.Incoming),
-			Outgoing:     int64(d.Kpis.Outgoing),
-			Balance:      int64(d.Kpis.Balance),
+			CurrentTotal:   int64(d.Kpis.CurrentTotal),
+			ToPay:          int64(d.Kpis.ToPay),
+			ToReceive:      int64(d.Kpis.ToReceive),
+			Surplus:        int64(d.Kpis.Surplus),
+			Incoming:       int64(d.Kpis.Incoming),
+			Outgoing:       int64(d.Kpis.Outgoing),
+			Balance:        int64(d.Kpis.Balance),
+			OpeningBalance: optionalAmount(d.Kpis.OpeningBalance),
+			ExpectedClose:  optionalAmount(d.Kpis.ExpectedClose),
+			Mismatch:       optionalAmount(d.Kpis.Mismatch),
 		},
 		ToPayBreakdown: toPayBreakdownResponse{
 			Fixed:      int64(d.ToPayBreakdown.Fixed),
@@ -371,4 +379,12 @@ func formatMonth(month *kernel.YearMonth) *string {
 	}
 	text := month.String()
 	return &text
+}
+
+func optionalAmount(amount *kernel.Money) *int64 {
+	if amount == nil {
+		return nil
+	}
+	value := int64(*amount)
+	return &value
 }

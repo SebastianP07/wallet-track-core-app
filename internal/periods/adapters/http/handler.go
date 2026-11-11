@@ -30,15 +30,17 @@ var (
 
 // UseCases are the operations this adapter exposes.
 type UseCases struct {
-	ListPeriods    *application.ListPeriods
-	GetPeriod      *application.GetPeriod
-	OpenPeriod     *application.OpenPeriod
-	ClosePeriod    *application.ClosePeriod
-	ListTemplates  *application.ListTemplates
-	GetTemplate    *application.GetTemplate
-	CreateTemplate *application.CreateTemplate
-	UpdateTemplate *application.UpdateTemplate
-	DeleteTemplate *application.DeleteTemplate
+	ListPeriods *application.ListPeriods
+	GetPeriod   *application.GetPeriod
+	OpenPeriod  *application.OpenPeriod
+	ClosePeriod *application.ClosePeriod
+	// SetOpeningBalance answers PATCH /periods/{period}.
+	SetOpeningBalance *application.SetOpeningBalance
+	ListTemplates     *application.ListTemplates
+	GetTemplate       *application.GetTemplate
+	CreateTemplate    *application.CreateTemplate
+	UpdateTemplate    *application.UpdateTemplate
+	DeleteTemplate    *application.DeleteTemplate
 }
 
 type Config struct {
@@ -69,6 +71,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	read("/periods", h.listPeriods)
 	write(http.MethodPost, "/periods", h.openPeriod)
 	read("/periods/{period}", h.getPeriod)
+	write(http.MethodPatch, "/periods/{period}", h.updatePeriod)
 	write(http.MethodPost, "/periods/{period}/close", h.closePeriod)
 
 	read("/recurring-templates", h.listTemplates)
@@ -79,11 +82,12 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 type periodResponse struct {
-	ID        string    `json:"id"`
-	Period    string    `json:"period"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID             string    `json:"id"`
+	Period         string    `json:"period"`
+	Status         string    `json:"status"`
+	OpeningBalance *int64    `json:"openingBalance"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type periodListResponse struct {
@@ -111,6 +115,11 @@ type openPeriodBody struct {
 	Period json.RawMessage `json:"period"`
 }
 
+// updatePeriodBody keeps the field raw, so an absent openingBalance can be told apart from a null one.
+type updatePeriodBody struct {
+	OpeningBalance json.RawMessage `json:"openingBalance"`
+}
+
 // templateBody keeps each field raw, so that a wrong type or a null is reported on its own field
 // and an absent field can be told apart from a null one.
 type templateBody struct {
@@ -125,12 +134,21 @@ type templateBody struct {
 
 func toPeriodResponse(period domain.Period) periodResponse {
 	return periodResponse{
-		ID:        period.ID,
-		Period:    period.Month.String(),
-		Status:    string(period.Status),
-		CreatedAt: period.CreatedAt,
-		UpdatedAt: period.UpdatedAt,
+		ID:             period.ID,
+		Period:         period.Month.String(),
+		Status:         string(period.Status),
+		OpeningBalance: toOptionalAmount(period.OpeningBalance),
+		CreatedAt:      period.CreatedAt,
+		UpdatedAt:      period.UpdatedAt,
 	}
+}
+
+func toOptionalAmount(amount *kernel.Money) *int64 {
+	if amount == nil {
+		return nil
+	}
+	value := int64(*amount)
+	return &value
 }
 
 func toTemplateResponse(template domain.Template) templateResponse {
@@ -201,6 +219,42 @@ func (h *Handler) openPeriod(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusCreated
 	}
 	platform.WriteJSON(w, status, toPeriodResponse(opened.Period))
+}
+
+func (h *Handler) updatePeriod(w http.ResponseWriter, r *http.Request) {
+	month, ok := pathMonth(w, r)
+	if !ok {
+		return
+	}
+	var body updatePeriodBody
+	if err := platform.DecodeJSON(w, r, &body); err != nil {
+		writeBadRequest(w)
+		return
+	}
+	if body.OpeningBalance == nil {
+		writeBadRequest(w, platform.FieldError{Field: "openingBalance", Message: "is required"})
+		return
+	}
+	var raw *int64
+	if string(body.OpeningBalance) != "null" {
+		value, ok := parseInteger(body.OpeningBalance)
+		if !ok {
+			writeBadRequest(w, platform.FieldError{Field: "openingBalance", Message: domain.OpeningBalanceMessage})
+			return
+		}
+		raw = &value
+	}
+	amount, err := domain.NewOpeningBalance(raw)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	period, err := h.UseCases.SetOpeningBalance.Execute(r.Context(), month, amount)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	platform.WriteJSON(w, http.StatusOK, toPeriodResponse(period))
 }
 
 func (h *Handler) closePeriod(w http.ResponseWriter, r *http.Request) {

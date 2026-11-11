@@ -92,11 +92,12 @@ func (r periodReader) Get(ctx context.Context, month kernel.YearMonth) (dashboar
 		return dashboarddomain.Period{}, err
 	}
 	return dashboarddomain.Period{
-		ID:        period.ID,
-		Month:     period.Month,
-		Status:    string(period.Status),
-		CreatedAt: period.CreatedAt,
-		UpdatedAt: period.UpdatedAt,
+		ID:             period.ID,
+		Month:          period.Month,
+		Status:         string(period.Status),
+		OpeningBalance: period.OpeningBalance,
+		CreatedAt:      period.CreatedAt,
+		UpdatedAt:      period.UpdatedAt,
 	}, nil
 }
 

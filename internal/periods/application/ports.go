@@ -23,6 +23,8 @@ type Repository interface {
 	// LockPeriod holds the month's row until the transaction ends.
 	LockPeriod(ctx context.Context, month kernel.YearMonth) (domain.Period, error)
 	MarkPeriodClosed(ctx context.Context, id string) (domain.Period, error)
+	// SetOpeningBalance returns domain.ErrPeriodNotFound for a month not opened. A nil amount clears it.
+	SetOpeningBalance(ctx context.Context, month kernel.YearMonth, amount *kernel.Money) (domain.Period, error)
 	// CarryPendingExpenses makes the month's pending fixed and occasional items overdue, owed in to (D7).
 	CarryPendingExpenses(ctx context.Context, periodID string, to kernel.YearMonth) error
 	// CarryOwedExpenses moves the overdue expenses owed in from, whatever their month of origin, to to (D7).
@@ -39,6 +41,8 @@ type Repository interface {
 	MemberIncome() MemberIncome
 	// PlatformCharges works inside this repository's transaction. Only a repository from WithinTx has it.
 	PlatformCharges() PlatformCharges
+	// AccountBalances works inside this repository's transaction. Only a repository from WithinTx has it.
+	AccountBalances() AccountBalances
 
 	ListTemplates(ctx context.Context, filter TemplateFilter) ([]domain.Template, error)
 	// LockActiveTemplates holds the rows until the transaction ends, so that a template being cloned
@@ -64,6 +68,12 @@ type MemberIncome interface {
 // with a card, whose card charge the month gets (D14).
 type PlatformCharges interface {
 	WithCard(ctx context.Context) ([]domain.PlatformCharge, error)
+}
+
+// AccountBalances is what this module asks of the accounts module when opening a month: Total actual, the
+// month's opening balance (D6, D9). A sum beyond the bound comes back as kernel.ErrMoneyOutOfRange.
+type AccountBalances interface {
+	CurrentTotal(ctx context.Context) (kernel.Money, error)
 }
 
 type TxManager interface {

@@ -224,18 +224,19 @@ func newAccountsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog
 
 func newPeriodsHandler(pool *pgxpool.Pool, auth *authhttp.Handler, logger *slog.Logger) *periodshttp.Handler {
 	repo := periodspostgres.NewRepository(pool)
-	tx := periodspostgres.NewTxManager(pool, memberIncomeInTx, platformChargesInTx)
+	tx := periodspostgres.NewTxManager(pool, memberIncomeInTx, platformChargesInTx, accountBalancesInTx)
 	return periodshttp.NewHandler(periodshttp.Config{
 		UseCases: periodshttp.UseCases{
-			ListPeriods:    periodsapplication.NewListPeriods(repo),
-			GetPeriod:      periodsapplication.NewGetPeriod(repo),
-			OpenPeriod:     periodsapplication.NewOpenPeriod(tx),
-			ClosePeriod:    periodsapplication.NewClosePeriod(tx),
-			ListTemplates:  periodsapplication.NewListTemplates(repo),
-			GetTemplate:    periodsapplication.NewGetTemplate(repo),
-			CreateTemplate: periodsapplication.NewCreateTemplate(repo),
-			UpdateTemplate: periodsapplication.NewUpdateTemplate(tx),
-			DeleteTemplate: periodsapplication.NewDeleteTemplate(repo),
+			ListPeriods:       periodsapplication.NewListPeriods(repo),
+			GetPeriod:         periodsapplication.NewGetPeriod(repo),
+			OpenPeriod:        periodsapplication.NewOpenPeriod(tx),
+			ClosePeriod:       periodsapplication.NewClosePeriod(tx),
+			SetOpeningBalance: periodsapplication.NewSetOpeningBalance(repo),
+			ListTemplates:     periodsapplication.NewListTemplates(repo),
+			GetTemplate:       periodsapplication.NewGetTemplate(repo),
+			CreateTemplate:    periodsapplication.NewCreateTemplate(repo),
+			UpdateTemplate:    periodsapplication.NewUpdateTemplate(tx),
+			DeleteTemplate:    periodsapplication.NewDeleteTemplate(repo),
 		},
 		RequireSession: auth.RequireFullSession,
 		RequireCSRF:    auth.CSRF.Protect,
@@ -347,6 +348,10 @@ func platformChargesInTx(tx pgx.Tx) periodsapplication.PlatformCharges {
 	return platformCharges{platformsapplication.NewChargingPlatforms(platformspostgres.NewRepositoryInTx(tx))}
 }
 
+func accountBalancesInTx(tx pgx.Tx) periodsapplication.AccountBalances {
+	return accountBalances{accountsapplication.NewListAccounts(accountspostgres.NewRepositoryInTx(tx))}
+}
+
 func cardChargesInTx(tx pgx.Tx) platformsapplication.CardCharges {
 	return expensesapplication.NewPlatformCharges(expensespostgres.NewRepositoryInTx(tx))
 }
@@ -388,6 +393,20 @@ func (p platformCharges) WithCard(ctx context.Context) ([]periodsdomain.Platform
 		})
 	}
 	return charges, nil
+}
+
+// accountBalances carries Total actual to the periods module, for the opening balance of a month it opens.
+type accountBalances struct {
+	list *accountsapplication.ListAccounts
+}
+
+// CurrentTotal keeps kernel.ErrMoneyOutOfRange in the error, as the port promises: ListAccounts wraps it.
+func (a accountBalances) CurrentTotal(ctx context.Context) (kernel.Money, error) {
+	list, err := a.list.Execute(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return list.Totals.Current, nil
 }
 
 var _ http.Handler = http.NewServeMux()

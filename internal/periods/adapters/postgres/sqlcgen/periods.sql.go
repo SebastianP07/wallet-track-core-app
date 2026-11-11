@@ -134,7 +134,7 @@ const createPeriod = `-- name: CreatePeriod :one
 INSERT INTO periods (year, month)
 VALUES ($1, $2)
 ON CONFLICT (year, month) DO NOTHING
-RETURNING id, year, month, status, created_at, updated_at
+RETURNING id, year, month, status, created_at, updated_at, opening_balance
 `
 
 type CreatePeriodParams struct {
@@ -152,6 +152,7 @@ func (q *Queries) CreatePeriod(ctx context.Context, arg CreatePeriodParams) (Per
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpeningBalance,
 	)
 	return i, err
 }
@@ -213,7 +214,7 @@ func (q *Queries) DeleteTemplate(ctx context.Context, id pgtype.UUID) (int64, er
 }
 
 const getPeriod = `-- name: GetPeriod :one
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 WHERE year = $1 AND month = $2
 `
@@ -233,6 +234,7 @@ func (q *Queries) GetPeriod(ctx context.Context, arg GetPeriodParams) (Period, e
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpeningBalance,
 	)
 	return i, err
 }
@@ -263,7 +265,7 @@ func (q *Queries) GetTemplate(ctx context.Context, id pgtype.UUID) (RecurringTem
 }
 
 const listPeriods = `-- name: ListPeriods :many
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 ORDER BY year DESC, month DESC
 `
@@ -284,6 +286,7 @@ func (q *Queries) ListPeriods(ctx context.Context) ([]Period, error) {
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OpeningBalance,
 		); err != nil {
 			return nil, err
 		}
@@ -375,7 +378,7 @@ func (q *Queries) LockActiveTemplates(ctx context.Context) ([]RecurringTemplate,
 }
 
 const lockPeriod = `-- name: LockPeriod :one
-SELECT id, year, month, status, created_at, updated_at
+SELECT id, year, month, status, created_at, updated_at, opening_balance
 FROM periods
 WHERE year = $1 AND month = $2
 FOR UPDATE
@@ -396,6 +399,7 @@ func (q *Queries) LockPeriod(ctx context.Context, arg LockPeriodParams) (Period,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpeningBalance,
 	)
 	return i, err
 }
@@ -454,7 +458,7 @@ const markPeriodClosed = `-- name: MarkPeriodClosed :one
 UPDATE periods
 SET status = 'closed'
 WHERE id = $1
-RETURNING id, year, month, status, created_at, updated_at
+RETURNING id, year, month, status, created_at, updated_at, opening_balance
 `
 
 func (q *Queries) MarkPeriodClosed(ctx context.Context, id pgtype.UUID) (Period, error) {
@@ -467,6 +471,7 @@ func (q *Queries) MarkPeriodClosed(ctx context.Context, id pgtype.UUID) (Period,
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OpeningBalance,
 	)
 	return i, err
 }
@@ -490,6 +495,34 @@ WHERE t.id = slots.template_id
 func (q *Queries) PlaceTemplates(ctx context.Context, ids []pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, placeTemplates, ids)
 	return err
+}
+
+const setPeriodOpeningBalance = `-- name: SetPeriodOpeningBalance :one
+UPDATE periods
+SET opening_balance = $1
+WHERE year = $2 AND month = $3
+RETURNING id, year, month, status, created_at, updated_at, opening_balance
+`
+
+type SetPeriodOpeningBalanceParams struct {
+	OpeningBalance pgtype.Int8
+	Year           int32
+	Month          int32
+}
+
+func (q *Queries) SetPeriodOpeningBalance(ctx context.Context, arg SetPeriodOpeningBalanceParams) (Period, error) {
+	row := q.db.QueryRow(ctx, setPeriodOpeningBalance, arg.OpeningBalance, arg.Year, arg.Month)
+	var i Period
+	err := row.Scan(
+		&i.ID,
+		&i.Year,
+		&i.Month,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OpeningBalance,
+	)
+	return i, err
 }
 
 const updateTemplate = `-- name: UpdateTemplate :one
